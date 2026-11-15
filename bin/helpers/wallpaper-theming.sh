@@ -181,6 +181,7 @@ if [[ "${1:-}" == "--headless" ]]; then
 
     MAX_JOBS=$(nproc 2>/dev/null || echo 4)
     STATUS_FILE=$(mktemp /tmp/theming_status.XXXXXX)
+    mkdir -p "$HEADLESS_OUT_DIR"
     running=0
 
     for f in "${HEADLESS_FILES[@]}"; do
@@ -208,7 +209,7 @@ if [[ "${1:-}" == "--headless" ]]; then
         ((running--)) || true
     done
 
-    COUNT=$(grep -c "^0$" "$STATUS_FILE" 2>/dev/null || echo 0)
+    COUNT=$(grep -c "^0$" "$STATUS_FILE" 2>/dev/null || true)
     rm -f "$STATUS_FILE"
 
     command -v notify-send >/dev/null 2>&1 && notify-send -a "${HELPER_TITLE}" "${HELPER_TITLE}" "Successfully themed $COUNT wallpaper(s) ($PALETTE_NAME)" || true
@@ -297,6 +298,7 @@ echo "  Opening file picker for input wallpapers..."
 # ------------------------------------------------------------------------------
 RAW_FILES=$(zenity --file-selection --multiple --separator="|" \
     --title="Wallpaper Theming - Select Wallpapers" \
+    --filename="$HOME/Pictures/" \
     --file-filter="Images (*.png, *.jpg, *.jpeg, *.webp, *.avif) | *.png *.jpg *.jpeg *.webp *.avif *.PNG *.JPG *.JPEG *.WEBP *.AVIF" \
     2>/dev/null || true)
 
@@ -315,7 +317,7 @@ echo "  Opening directory picker for destination..."
 # ------------------------------------------------------------------------------
 DEST_DIR=$(zenity --file-selection --directory \
     --title="Wallpaper Theming - Select Target Directory" \
-    --filename="$HOME/Pictures/Current-Wallpapers/" \
+    --filename="$HOME/Pictures/" \
     2>/dev/null || true)
 
 if [[ -z "$DEST_DIR" ]]; then
@@ -382,7 +384,7 @@ echo ""
     --auto-close \
     --no-cancel 2>/dev/null || true
 
-SUCCESS_COUNT=$(grep -c "^0$" "$STATUS_FILE" 2>/dev/null || echo 0)
+SUCCESS_COUNT=$(grep -c "^0$" "$STATUS_FILE" 2>/dev/null || true)
 rm -f "$STATUS_FILE"
 
 # Notify via notification daemon (Mako)
