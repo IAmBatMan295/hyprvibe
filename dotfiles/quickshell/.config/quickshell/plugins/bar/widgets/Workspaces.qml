@@ -67,14 +67,25 @@ BarWidget {
         bar: root.bar
         text: modelData === 10 ? "0" : String(modelData)
         fontBold: focused
-        foreground: focused ? (root.bar ? root.bar.foreground : ThemeColor.foreground) : ThemeColor.muted
+        foreground: focused ? ThemeColor.background : ThemeColor.muted
+        highlightOnHover: !focused
         opacity: focused ? 1.0 : (occupied ? 0.8 : 0.5)
-        horizontalMargin: 4
+        horizontalMargin: 6
         verticalPadding: 2
         fontSize: Style.font.body
         fixedWidth: root.vertical ? root.barSize : -1
         fixedHeight: root.barSize
         onPressed: function() { root.focusWorkspace(modelData) }
+
+        Rectangle {
+          z: -1
+          visible: focused
+          anchors.fill: parent
+          anchors.topMargin: 2
+          anchors.bottomMargin: 2
+          color: ThemeColor.accent
+          radius: 0
+        }
       }
     }
   }

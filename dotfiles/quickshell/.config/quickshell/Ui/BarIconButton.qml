@@ -33,7 +33,11 @@ WidgetButton {
       text: root.text
       fontFamily: root.fontFamily
       fontSize: root.fontSize
-      color: root.active && root.useActiveColor ? root.activeColor : root.foreground
+      color: {
+        if (root.active && root.useActiveColor) return root.activeColor
+        if (root.hovered && root.highlightOnHover) return root.hoverColor
+        return root.foreground
+      }
       rotation: root.textRotation
       debugBounds: root.debugOpticalBounds
     }

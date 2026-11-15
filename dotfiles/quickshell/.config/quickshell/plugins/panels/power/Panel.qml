@@ -141,7 +141,7 @@ Panel {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: root.batteryIcon() + " " + Math.round(root.batteryFraction * 100) + "%"
+    text: Math.round(root.batteryFraction * 100) + "% " + root.batteryIcon()
     fontSize: Style.font.body
     horizontalMargin: 6
     verticalPadding: 2

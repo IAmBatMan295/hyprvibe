@@ -56,6 +56,8 @@ BarWidget {
     horizontalMargin: 8
     verticalPadding: 4
     pressable: false
+    interactive: false
+    highlightOnHover: false
 
     Column {
       visible: root.vertical
