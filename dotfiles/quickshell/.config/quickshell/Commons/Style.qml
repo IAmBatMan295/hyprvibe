@@ -372,7 +372,7 @@ QtObject {
       var css = String(json.css || "")
       var parts = css.match(/-?\d+(?:\.\d+)?/g) || []
       var n = parts.length > 0 ? Number(parts[0]) : Number(json.int)
-      if (isFinite(n) && n >= 0) gapsOut = Math.max(0, Math.round(n / 2))
+      if (isFinite(n) && n >= 0) gapsOut = Math.max(0, Math.round(n))
     } catch (e) {
       // hyprctl missing / Hyprland not running — leave the previous value.
     }

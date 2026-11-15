@@ -207,7 +207,9 @@ PanelWindow {
       x = barPos === "left" ? barW + gap : screenW - barW - contentWidth - gap
       y = screenH / 2 - contentHeight / 2
     } else if (barPos === "bottom") {
-      x = anchorScreenPos.x + anchorW / 2 - contentWidth / 2
+      x = (anchorScreenPos.x > screenW / 2)
+        ? (screenW - contentWidth - margin)
+        : (anchorScreenPos.x + anchorW / 2 - contentWidth / 2)
       y = screenH - barH - contentHeight - gap
     } else if (barPos === "left") {
       x = barW + gap
@@ -216,7 +218,9 @@ PanelWindow {
       x = screenW - barW - contentWidth - gap
       y = anchorScreenPos.y + anchorH / 2 - contentHeight / 2
     } else { // "top" (default)
-      x = anchorScreenPos.x + anchorW / 2 - contentWidth / 2
+      x = (anchorScreenPos.x > screenW / 2)
+        ? (screenW - contentWidth - margin)
+        : (anchorScreenPos.x + anchorW / 2 - contentWidth / 2)
       y = barH + gap
     }
     x = Math.max(margin, Math.min(x, screenW - contentWidth - margin))
@@ -422,7 +426,9 @@ PanelWindow {
   BorderSurface {
     id: card
     x: root.cardOrigin.x
-    y: root.cardOrigin.y
+    y: root.open
+      ? root.cardOrigin.y
+      : (root.cardOrigin.y + (root.barPos === "bottom" ? 16 : -16))
     width: root.contentWidth
     height: root.contentHeight
     color: ThemeColor.popups.background
@@ -430,10 +436,22 @@ PanelWindow {
     padding: root.padding
     radius: Style.cornerRadius
     opacity: root.open || root.popoutSwitching ? 1.0 : 0
+    layer.enabled: card.opacity < 1.0
+
+    Behavior on y {
+      enabled: !root.popoutSwitching && !root.popoutSwitchClosing
+      NumberAnimation {
+        duration: root.open ? 300 : 200
+        easing.type: root.open ? Easing.OutCubic : Easing.InQuad
+      }
+    }
 
     Behavior on opacity {
       enabled: !root.popoutSwitching && !root.popoutSwitchClosing
-      NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
+      NumberAnimation {
+        duration: root.open ? 300 : 200
+        easing.type: root.open ? Easing.OutCubic : Easing.InQuad
+      }
     }
 
     HoverHandler {
@@ -493,7 +511,7 @@ PanelWindow {
 
       Behavior on opacity {
         enabled: root.popoutSwitching
-        NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
+        NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
       }
     }
   }
