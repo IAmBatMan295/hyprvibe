@@ -160,7 +160,7 @@ function wifiSectionTitle(wifiNetworks, index) {
   if (!net) return ""
 
   if (net.known && index === 0) return "KNOWN NETWORKS"
-  if (!net.known && (index === 0 || (networks[index - 1] && networks[index - 1].known))) return "OTHER NETWORKS"
+  if (!net.known && (index === 0 || (networks[index - 1] && networks[index - 1].known))) return "AVAILABLE NETWORKS"
   return ""
 }
 
@@ -174,7 +174,7 @@ function requiresCredentials(security, openSecurity, oweSecurity) {
 }
 
 function canForgetNetwork(network) {
-  return !!(network && network.known && !network.connected)
+  return !!(network && network.known)
 }
 
 // The password arrives on stdin and reaches nmcli through the scriptable

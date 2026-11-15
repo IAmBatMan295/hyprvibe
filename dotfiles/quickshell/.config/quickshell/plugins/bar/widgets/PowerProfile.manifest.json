@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "hyprvibe.powerprofile",
+  "name": "Power Profile",
+  "version": "1.0.0",
+  "author": "HyprVibe",
+  "description": "Active power profile icon indicator",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "PowerProfile.qml"
+  },
+  "barWidget": {
+    "displayName": "Power Profile",
+    "description": "Active power profile icon indicator",
+    "category": "Hardware",
+    "allowMultiple": false
+  }
+}

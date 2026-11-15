@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "hyprvibe.separator",
+  "name": "Separator",
+  "version": "1.0.0",
+  "author": "HyprVibe",
+  "description": "Bar pipe separator",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Separator.qml"
+  },
+  "barWidget": {
+    "displayName": "Separator",
+    "description": "Bar pipe separator",
+    "category": "Layout",
+    "allowMultiple": true
+  }
+}

@@ -54,19 +54,17 @@ BorderSurface {
   readonly property bool _showFocusRing: focusable && activeFocus
   readonly property bool _hot: (mouse.containsMouse || root.hasCursor) && root.enabled
   readonly property var _borderSpec: _showFocusRing
-    ? Border.controlSpec("focus", hoverColor, hoverColor)
-    : (_hot && bordered
-      ? Border.controlSpec("hover-cursor", hoverColor, hoverColor)
-      : (bordered ? Border.controlSpec("normal", foreground, ThemeColor.accent) : Border.none()))
-
-  color: _showFocusRing
-    ? Style.focusFillFor(hoverColor, hoverColor)
+    ? Border.flat(hoverColor, 2)
     : (_hot
-      ? Style.hoverFillFor(hoverColor, hoverColor)
-      : "transparent")
+      ? Border.flat(ThemeColor.muted, 1)
+      : (bordered ? Border.flat(Qt.darker(ThemeColor.muted, 1.4), 1) : Border.none()))
+
+  color: mouse.pressed
+    ? Qt.rgba(hoverColor.r, hoverColor.g, hoverColor.b, 0.15)
+    : "transparent"
   borderSpec: _borderSpec
 
-  Behavior on color { ColorAnimation { duration: 60 } }
+  Behavior on color { ColorAnimation { duration: 80 } }
 
   Text {
     textFormat: Text.PlainText

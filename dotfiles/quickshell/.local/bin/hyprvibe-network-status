@@ -5,6 +5,10 @@ set -euo pipefail
 verbose=false
 internet_probe=1.1.1.1
 
+cmd_present() {
+  command -v "$1" >/dev/null 2>&1
+}
+
 case "${1:-}" in
   "")
     ;;
@@ -22,10 +26,6 @@ case "${1:-}" in
     exit 2
     ;;
 esac
-
-cmd_present() {
-  command -v "$1" >/dev/null 2>&1
-}
 
 print_status() {
   local device nm state ssid signal freq

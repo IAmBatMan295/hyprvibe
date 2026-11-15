@@ -103,29 +103,21 @@ BorderSurface {
     Border.left(_selectedBorderSpec),
     bordered ? Border.left(_normalBorderSpec) : 0)
   readonly property real _reservedContentLeftInset: _reservedBorderLeft + leftPadding
-  readonly property var _borderSpec: _showFocusRing ? _focusBorderSpec
-    : hot                      ? _hoverBorderSpec
-    : selected                 ? (Border.controlHasWidth("selected") ? _selectedBorderSpec : (bordered ? _normalBorderSpec : Border.none()))
-    : bordered                 ? _normalBorderSpec
-    : Border.none()
+  readonly property var _borderSpec: (root.active || root.selected)
+    ? Border.flat(root.accent, 2)
+    : (_showFocusRing || hot
+      ? Border.flat(ThemeColor.muted, 1)
+      : (bordered ? Border.flat(Qt.darker(ThemeColor.muted, 1.4), 1) : Border.none()))
 
-  color: mouseArea.pressed ? Style.pressedFillFor(root.foreground, root.accent)
-    : _showFocusRing       ? Style.focusFillFor(root.foreground, root.accent)
-    : hot                  ? Style.hoverFillFor(root.foreground, root.accent)
-    : selected             ? Style.selectedFillFor(root.foreground, root.accent)
-    : active               ? Style.selectedFillFor(root.foreground, root.accent)
-    : background
+  color: mouseArea.pressed
+    ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.15)
+    : "transparent"
 
-  // Border follows the same state precedence as fill. Buttons stay
-  // borderless at rest unless `bordered` is set, but hover-cursor/focus
-  // always use the shared cursor border so the keyboard target is visible
-  // and consistent with the rest of the kit. Selected borders are off by
-  // default for plain buttons; explicitly bordered buttons keep their
-  // normal border when selected unless selected-border-width opts in to a
-  // dedicated selected border.
+  // Border follows state precedence: active/selected gets 2px accent border;
+  // hover/focus gets 1px muted border; idle bordered gets 1px subtle border.
   borderSpec: _borderSpec
 
-  Behavior on color { ColorAnimation { duration: 120 } }
+  Behavior on color { ColorAnimation { duration: 80 } }
 
   ToolTip {
     visible: root.tooltipText !== "" && mouseArea.containsMouse
@@ -162,7 +154,7 @@ BorderSurface {
       textFormat: Text.PlainText
       visible: root.iconText !== ""
       text: root.iconText
-      color: root.selected ? root._selectedColor : root.foreground
+      color: (root.selected || root.active) ? root.foreground : (root.hot ? root.foreground : Qt.darker(root.foreground, 1.3))
       font.family: root.fontFamily
       font.pixelSize: root.iconSize
       rotation: root.iconSpinning ? 0 : root.iconRotation
@@ -182,10 +174,10 @@ BorderSurface {
       textFormat: Text.PlainText
       visible: root.text !== ""
       text: root.text
-      color: root.selected ? root._selectedColor : root.foreground
+      color: (root.selected || root.active) ? root.foreground : (root.hot ? root.foreground : Qt.darker(root.foreground, 1.3))
       font.family: root.fontFamily
       font.pixelSize: root.fontSize
-      font.bold: root.selected
+      font.bold: root.selected || root.active
       anchors.verticalCenter: parent.verticalCenter
     }
   }

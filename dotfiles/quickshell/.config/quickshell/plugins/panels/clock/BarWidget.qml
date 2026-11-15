@@ -5,9 +5,7 @@ import qs.Commons
 import qs.Ui
 import "Model.js" as Model
 
-// Date/time label for the bar, and the host for the calendar popup.
-//
-// Left click reveals the calendar.
+// Date/time label for the bar. No popup panel, clicks are no-op.
 BarWidget {
   id: root
   moduleName: "hyprvibe.clock"
@@ -22,72 +20,16 @@ BarWidget {
   readonly property string displayText: formatted(displayDate)
   readonly property var verticalLines: displayText.split("\n")
 
-
   function refresh() {
     displayDate = new Date()
-    if (panelLoader.item && panelLoader.item.refresh) panelLoader.item.refresh()
   }
 
   function formatted(date) {
     return Qt.formatDateTime(date, activeFormat.replace(/ww/g, Model.isoWeekLiteral(date.getFullYear(), date.getMonth(), date.getDate())))
   }
 
-  // ---- Calendar popup. Shape contract for shell.summon/hide/toggle
-  //      routing: Bar.findPanelWidget requires open/close/opened on the
-  //      bar-widget root.
-  property bool panelRequested: false
-  readonly property bool opened: panelRequested && panelLoader.item ? panelLoader.item.opened === true : false
-
-  function open() {
-    panelRequested = true
-    if (panelLoader.item) panelLoader.item.open()
-  }
-
-  function close() {
-    panelRequested = false
-    if (panelLoader.item) panelLoader.item.close()
-  }
-
-  function togglePanel() {
-    if (root.opened) root.close()
-    else root.open()
-  }
-
-  function toggleWeekStart() {
-    if (panelLoader.item) panelLoader.item.toggleWeekStart()
-  }
-
-  // The clock fills more slot than it paints a mark for, at both
-  // orientations: horizontally it is a text label in a padded slot, so the
-  // dot takes the label width; vertically it is a stack of icon-sized lines,
-  // so the dot takes one line — the same mark every icon widget gets, rather
-  // than a rule running the height of the whole stack.
-  readonly property real openPanelIndicatorWidth: button.labelWidth
-  readonly property real openPanelIndicatorHeight: Math.max(Style.space(10), Math.round(Style.bar.iconSlot * 0.55))
-
-  // Forwarded so this widget can stand in for the panel as the bar's popout
-  // identity: Bar.requestPopout prefers closeForPopoutSwitch over close, and
-  // KeyboardPanel reads popoutSwitchClosing back off its owner.
-  readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
-
-  function closeForPopoutSwitch() {
-    if (panelLoader.item) panelLoader.item.closeForPopoutSwitch()
-  }
-
-  function injectPanel() {
-    var target = panelLoader.item
-    if (!target) return
-    if ("bar" in target) target.bar = root.bar
-    if ("settings" in target) target.settings = root.settings
-    if ("anchorItem" in target) target.anchorItem = button
-    if ("hostWidget" in target) target.hostWidget = root
-  }
-
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
-
-  onBarChanged: injectPanel()
-  onSettingsChanged: injectPanel()
 
   SystemClock {
     id: clock
@@ -95,30 +37,10 @@ BarWidget {
     onDateChanged: root.displayDate = date
   }
 
-  Loader {
-    id: panelLoader
-    active: root.panelRequested
-    source: Qt.resolvedUrl("Panel.qml")
-    visible: false
-    onLoaded: {
-      root.injectPanel()
-      Qt.callLater(function() {
-        root.injectPanel()
-        if (panelLoader.item) panelLoader.item.open()
-      })
-    }
-  }
-
   IpcHandler {
     target: "hyprvibe.clock"
 
-    function refresh() { root.broadcast("refresh") }
-    function toggleWeekStart() { root.toggleWeekStart() }
-    function open() { root.open() }
-    function close() { root.close() }
-    function show() { root.open() }
-    function hide() { root.close() }
-    function toggle() { root.togglePanel() }
+    function refresh() { root.refresh() }
   }
 
   WidgetButton {
@@ -133,10 +55,7 @@ BarWidget {
     fixedHeight: root.vertical ? root.verticalLines.length * Style.bar.iconSlot : -1
     horizontalMargin: 8
     verticalPadding: 4
-
-    onPressed: function(b) {
-      if (b === Qt.LeftButton) root.togglePanel()
-    }
+    pressable: false
 
     Column {
       visible: root.vertical

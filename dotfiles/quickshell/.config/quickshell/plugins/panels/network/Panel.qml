@@ -29,17 +29,6 @@ Panel {
   }
 
 
-  property int connectionPhraseIndex: 0
-  readonly property var connectionPhrases: [
-    "Wiring bits",
-    "Handling packets",
-    "Sorting frames",
-    "Hauling bytes",
-    "Routing crumbs",
-    "Counting collisions",
-    "Bending light",
-  ]
-  readonly property string connectionPhrase: connectionPhrases[connectionPhraseIndex % connectionPhrases.length]
   readonly property bool networkManagerAvailable: Networking.backend === NetworkBackendType.NetworkManager
   readonly property var networkDevices: Networking.devices ? Networking.devices.values : []
   readonly property var wifiDevice: findDevice(DeviceType.Wifi)
@@ -106,13 +95,9 @@ Panel {
   // "off" beside a perfectly live Ethernet connection.
   readonly property bool canToggleWifi: networkManagerAvailable && wifiStationAvailable
   readonly property bool canScanWifi: networkManagerAvailable && wifiStationAvailable && Networking.wifiEnabled
-  readonly property int qrHeaderIndex: -1
-  readonly property int speedHeaderIndex: -1
   readonly property int refreshHeaderIndex: canScanWifi ? 0 : -1
   readonly property int toggleHeaderIndex: canToggleWifi ? (canScanWifi ? 1 : 0) : -1
   readonly property int headerActionCount: (canScanWifi ? 1 : 0) + (canToggleWifi ? 1 : 0)
-  readonly property bool qrHeaderHasCursor: false
-  readonly property bool speedHeaderHasCursor: false
   readonly property bool refreshHeaderHasCursor: cursorActive && focusSection === "header" && headerIndex === refreshHeaderIndex
   readonly property bool toggleHeaderHasCursor: cursorActive && focusSection === "header" && headerIndex === toggleHeaderIndex
   readonly property string toggleHint: Networking.wifiEnabled ? "Turn Wi-Fi off" : "Turn Wi-Fi on"
@@ -191,16 +176,10 @@ Panel {
     function hide() { root.close() }
     function toggle() { root.toggle() }
     function toggleNetwork() { root.toggleNetwork() }
-    // Compat routes for configs that summon the centered cards through the
-    // network target; both cards are their own plugins now.
-    function showQr() { root.summonWifiQr(true) }
-    function speedTest() { root.summonSpeedTest() }
   }
 
   function activateHeader() {
     if (headerIndex === refreshHeaderIndex) scanWifiNetworks()
-    else if (headerIndex === qrHeaderIndex) summonWifiQr()
-    else if (headerIndex === speedHeaderIndex) summonSpeedTest()
     else if (headerIndex === toggleHeaderIndex) toggleNetwork()
   }
 
@@ -392,7 +371,7 @@ Panel {
     // Only act on a row that still resolves. disconnect() falls back to
     // connectedWifiNetwork when handed null, so a row left stale by scan churn
     // would otherwise tear down whatever is connected now instead.
-    if (net.connected) { disconnectRow(net.ssid); return }
+    if (net.connected) return
     if (requiresCredentials(net.security) && !net.known) { openPasswordPrompt(net.ssid); return }
     connectDirectly(net.ssid)
   }
@@ -417,21 +396,6 @@ Panel {
 
   readonly property string icon: Model.connectionIcon(kind, signalStrength)
 
-  // The share card is its own panel plugin (hyprvibe.wifiqr) so a replacement
-  // design can take it over; summon() routes to whichever implementation is
-  // enabled. The panel's own button pins the interface it is showing. The
-  // IPC route forces self-detection instead: details polling stops while the
-  // panel is closed, so its cached interface can be stale.
-  function summonWifiQr(forceDetect) {
-    controller.hide()
-    cancelPasswordPrompt()
-    var payload = {}
-    if (!forceDetect && kind === "wifi" && connectedWifiNetwork) {
-      payload.ssid = connectedWifiNetwork.name
-    }
-    bar.shell.summon("hyprvibe.wifiqr", JSON.stringify(payload))
-  }
-
   function refresh(scanWifi) {
     if (scanWifi === undefined) scanWifi = false
     if (!dnsProc.running) {
@@ -446,7 +410,6 @@ Panel {
     // reaches here from action completion, timeouts and construction.
     if (opened && wifiDevice) {
       if (scanWifi) {
-        scanning = true
         setScannerEnabled(false)
         scanRestart.start()
       } else {
@@ -494,11 +457,16 @@ Panel {
     }
     wifiNetworks = Model.sortWifiRows(nets)
     wifiStationAvailable = !!wifiDevice
-    scanning = false
+  }
+
+  readonly property var displayedWifiNetworks: {
+    if (!wifiStationAvailable) return []
+    if (scanning) return wifiNetworks.filter(function(n) { return n && (n.connected || n.known) })
+    return wifiNetworks
   }
 
   function wifiSectionTitle(index) {
-    return Model.wifiSectionTitle(wifiNetworks, index)
+    return Model.wifiSectionTitle(displayedWifiNetworks, index)
   }
 
   function wifiIconFor(strength) {
@@ -532,19 +500,6 @@ Panel {
     root.pendingBand = band
     actionProc.command = ["hyprvibe-network-band", band]
     actionProc.running = true
-  }
-
-  // The speed test is its own panel plugin (hyprvibe.speedtest) so a
-  // replacement design can take it over; summon() routes to whichever
-  // implementation is enabled. The payload names the connection when this
-  // panel knows it; the plugin looks it up itself otherwise.
-  function summonSpeedTest() {
-    controller.hide()
-    cancelPasswordPrompt()
-    var connection = ""
-    if (kind === "wifi") connection = (connectedWifiNetwork ? connectedWifiNetwork.name : "") || "Wi-Fi"
-    else if (kind === "ethernet") connection = "Ethernet"
-    bar.shell.summon("hyprvibe.speedtest", connection ? JSON.stringify({ connection: connection }) : "{}")
   }
 
   function dnsCommand(provider) {
@@ -702,6 +657,19 @@ Panel {
     id: scanProc
     command: ["hyprvibe-network-status", "--scan"]
     onExited: function(exitCode, exitStatus) {
+      if (!scanTimer.running) {
+        root.scanning = false
+        root.syncWifiNetworks()
+      }
+    }
+  }
+
+  Timer {
+    id: scanTimer
+    interval: 3000
+    repeat: false
+    onTriggered: {
+      root.scanning = false
       root.syncWifiNetworks()
     }
   }
@@ -713,6 +681,7 @@ Panel {
       scanProc.command = ["hyprvibe-network-status", "--scan"]
       scanProc.running = true
     }
+    scanTimer.restart()
     refresh(true)
   }
 
@@ -723,16 +692,8 @@ Panel {
     onTriggered: {
       if (root.opened && root.wifiDevice) {
         root.setScannerEnabled(true)
-        scanDone.start()
       }
     }
-  }
-
-  Timer {
-    id: scanDone
-    interval: 1500
-    repeat: false
-    onTriggered: root.syncWifiNetworks()
   }
 
   Process {
@@ -790,38 +751,6 @@ Panel {
 
 
 
-  Timer {
-    id: connectionPhraseTimer
-    interval: 2800
-    running: root.opened && (root.kind === "ethernet" || (root.kind === "wifi" && root.canDisconnect))
-    repeat: true
-    onTriggered: connectionPhraseSwap.restart()
-  }
-
-  SequentialAnimation {
-    id: connectionPhraseSwap
-    PropertyAnimation {
-      target: heroMeta; property: "opacity"
-      to: 0.0; duration: 180; easing.type: Easing.OutQuad
-    }
-    ScriptAction {
-      script: root.connectionPhraseIndex = (root.connectionPhraseIndex + 1) % root.connectionPhrases.length
-    }
-    PropertyAnimation {
-      target: heroMeta; property: "opacity"
-      to: 1.0; duration: 260; easing.type: Easing.InQuad
-    }
-  }
-
-  Connections {
-    target: root
-    function onKindChanged() {
-      if (!(root.kind === "ethernet" || (root.kind === "wifi" && root.canDisconnect))) {
-        connectionPhraseSwap.stop()
-        heroMeta.opacity = 1.0
-      }
-    }
-  }
 
   Timer {
     id: actionTimeout
@@ -1027,22 +956,28 @@ Panel {
               borderSpec: Border.controlSpec("hover-cursor", root.bar.foreground, ThemeColor.accent)
             }
 
-            // Clickable icon centered inside (no color change on hover)
+            // Clickable icon centered inside (spins and mutes while scanning)
             Text {
               id: refreshIcon
               anchors.centerIn: parent
+              width: Style.font.icon
+              height: Style.font.icon
+              horizontalAlignment: Text.AlignHCenter
+              verticalAlignment: Text.AlignVCenter
               text: ""
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.icon
-              color: refreshButton.enabled ? root.bar.foreground : Qt.darker(root.bar.foreground, 2.0)
+              color: root.scanning ? ThemeColor.muted : (refreshButton.hot ? ThemeColor.accent : root.bar.foreground)
               textFormat: Text.PlainText
+              transformOrigin: Item.Center
 
-              NumberAnimation on rotation {
+              RotationAnimation on rotation {
                 running: root.scanning
                 from: 0
                 to: 360
                 duration: 800
                 loops: Animation.Infinite
+                direction: RotationAnimation.Clockwise
               }
 
               onRotationChanged: {
@@ -1063,8 +998,8 @@ Panel {
             }
 
             PanelToolTip {
-              visible: mouseArea.containsMouse
-              text: root.scanning ? "Scanning networks…" : "Scan for networks"
+              visible: mouseArea.containsMouse && refreshButton.enabled
+              text: "Scan for networks"
               fontFamily: root.bar.fontFamily
             }
           }
@@ -1121,18 +1056,9 @@ Panel {
             id: heroMeta
             textFormat: Text.PlainText
             width: parent.width
-            text: {
-              if (root.kind === "wifi") {
-                if (root.canDisconnect) return root.connectionPhrase.toUpperCase()
-                if (root.kind === "disconnected") return "NOT CONNECTED"
-                return ""
-              }
-              if (root.kind === "ethernet") return root.connectionPhrase.toUpperCase()
-              if (root.kind === "disconnected") return "NOT CONNECTED"
-              return ""
-            }
+            text: root.scanning ? "SCANNING..." : ""
             visible: text !== ""
-            color: Qt.darker(root.bar.foreground, 1.4)
+            color: ThemeColor.muted
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.caption
             font.bold: true
@@ -1336,15 +1262,8 @@ Panel {
 
       // Wi-Fi networks (only if a Wi-Fi station is available).
       PanelSeparator {
-        visible: root.wifiStationAvailable
+        visible: root.wifiStationAvailable && networkList.count > 0
         foreground: root.bar.foreground
-      }
-
-      PanelSectionHeader {
-        visible: root.wifiStationAvailable && root.scanning
-        text: "SCANNING WI-FI…"
-        foreground: root.bar.foreground
-        fontFamily: root.bar.fontFamily
       }
 
       // Scrollable network list — cap the height so a busy neighbourhood
@@ -1364,7 +1283,7 @@ Panel {
 
         ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
-        model: root.wifiStationAvailable ? root.wifiNetworks : []
+        model: root.displayedWifiNetworks
         currentIndex: root.selectedIndex
         onCurrentIndexChanged: if (currentIndex >= 0) positionViewAtIndex(currentIndex, ListView.Contain)
 
@@ -1388,7 +1307,6 @@ Panel {
               text: sectionTitle
               foreground: root.bar.foreground
               fontFamily: root.bar.fontFamily
-              height: visible ? implicitHeight : 0
             }
 
             NetworkRow {
@@ -1485,13 +1403,11 @@ Panel {
     readonly property bool canForget: root.canForgetNetwork(net)
     readonly property bool isSelected: root.focusSection === "wifi" && root.selectedIndex === index
     readonly property bool forgetFocused: isSelected && root.wifiActionFocused && canForget
-    readonly property bool forgetVisible: canForget && (!requiresCredentials || forgetFocused || rightMouse.containsMouse)
 
     hasCursor: root.cursorActive && isSelected && !root.wifiActionFocused
     current: isConnected
+    pressed: rowMouse.pressed
     foreground: root.bar.foreground
-    fill: root.hoverFill
-    currentFill: root.selectedFill
     // Gate on the matching *Kind/*Reason being non-empty so a hidden-SSID
     // row (ssid == "") doesn't match the "" defaults of actionSsid etc.
     readonly property bool isBusy: root.actionKind !== "" && root.actionSsid === (net ? net.ssid : "")
@@ -1553,7 +1469,7 @@ Panel {
       height: rowBody.implicitHeight
       hoverEnabled: true
       acceptedButtons: Qt.LeftButton
-      cursorShape: Qt.PointingHandCursor
+      cursorShape: row.net && !row.isConnected ? Qt.PointingHandCursor : Qt.ArrowCursor
       enabled: !root.busy
 
       // Move the cursor here when the mouse enters; mouse leaving doesn't
@@ -1570,7 +1486,7 @@ Panel {
         root.selectedIndex = row.index
         root.wifiActionFocused = false
         if (row.isConnected) {
-          root.disconnectRow(row.net.ssid)
+          // Do not disconnect on row click
           return
         }
         if (row.requiresCredentials && !row.isKnown) {
@@ -1588,7 +1504,7 @@ Panel {
       anchors.top: parent.top
       anchors.leftMargin: Style.space(10)
       anchors.rightMargin: Style.space(10)
-      implicitHeight: Math.max(networkIcon.implicitHeight, networkInfo.implicitHeight, rightAction.implicitHeight) + Style.spacing.rowPaddingX
+      implicitHeight: Math.max(networkIcon.implicitHeight, networkInfo.implicitHeight, rightActions.implicitHeight) + Style.spacing.rowPaddingX
 
       Text {
         id: networkIcon
@@ -1601,54 +1517,99 @@ Panel {
         anchors.verticalCenter: parent.verticalCenter
       }
 
-      // The right edge shows a lock for networks that require credentials and
-      // reveals Forget on hover. Known passwordless networks show Forget
-      // directly rather than reserving an invisible or misleading target.
-      Item {
-        id: rightAction
-        visible: row.requiresCredentials || row.canForget
-        width: Style.space(22)
-        implicitHeight: lockIndicator.implicitHeight
+      Row {
+        id: rightActions
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
+        spacing: Style.space(6)
 
+        // Lock icon for password networks that are NOT known/saved
         Text {
-          id: lockIndicator
-          textFormat: Text.PlainText
-          visible: row.requiresCredentials || row.forgetVisible
-          width: parent.width
+          visible: row.requiresCredentials && !row.isKnown && !row.isConnected
           anchors.verticalCenter: parent.verticalCenter
-          horizontalAlignment: Text.AlignHCenter
-          text: row.forgetVisible ? "󰅙" : "󰌾"
-          color: row.forgetVisible ? root.bar.urgent : Qt.darker(root.bar.foreground, 1.4)
+          text: "󰌾"
+          color: Qt.darker(root.bar.foreground, 1.4)
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.subtitle
         }
 
-        BorderSurface {
-          anchors.fill: parent
-          visible: row.forgetFocused
-          color: Style.hoverFillFor(root.bar.urgent, root.bar.urgent)
-          borderSpec: Border.controlSpec("hover-cursor", root.bar.urgent, root.bar.urgent)
-          radius: Style.cornerRadius
-          z: -1
+        // Forget text button
+        Item {
+          id: forgetBtn
+          visible: row.canForget && !row.isPasswordOpen
+          implicitWidth: forgetText.implicitWidth + Style.space(12)
+          implicitHeight: forgetText.implicitHeight + Style.space(6)
+          anchors.verticalCenter: parent.verticalCenter
+
+          readonly property bool hot: (forgetMouse.containsMouse || row.forgetFocused) && enabled
+
+          BorderSurface {
+            anchors.fill: parent
+            visible: forgetBtn.hot
+            color: forgetMouse.pressed ? Qt.rgba(root.bar.urgent.r, root.bar.urgent.g, root.bar.urgent.b, 0.15) : "transparent"
+            radius: Style.cornerRadius
+            borderSpec: Border.controlSpec("hover-cursor", root.bar.urgent, root.bar.urgent)
+            Behavior on color { ColorAnimation { duration: 80 } }
+          }
+
+          Text {
+            id: forgetText
+            anchors.centerIn: parent
+            text: "Forget"
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+            color: forgetBtn.hot ? root.bar.urgent : Qt.darker(root.bar.foreground, 1.4)
+          }
+
+          MouseArea {
+            id: forgetMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            acceptedButtons: Qt.LeftButton
+            cursorShape: Qt.PointingHandCursor
+            onContainsMouseChanged: if (containsMouse) { root.cursorActive = true; root.focusSection = "wifi"; root.selectedIndex = row.index; root.wifiActionFocused = true }
+            onClicked: if (row.net) root.forget(row.net)
+          }
         }
 
-        MouseArea {
-          id: rightMouse
-          anchors.fill: parent
-          hoverEnabled: true
-          acceptedButtons: Qt.LeftButton
-          enabled: row.canForget && !root.busy
-          cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-          onContainsMouseChanged: if (containsMouse) { root.cursorActive = true; root.focusSection = "wifi"; root.selectedIndex = row.index; root.wifiActionFocused = true }
-          onClicked: if (row.net) root.forget(row.net)
-        }
+        // Disconnect text button (rightmost)
+        Item {
+          id: disconnectBtn
+          visible: row.isConnected && !row.isPasswordOpen
+          implicitWidth: disconnectText.implicitWidth + Style.space(12)
+          implicitHeight: disconnectText.implicitHeight + Style.space(6)
+          anchors.verticalCenter: parent.verticalCenter
 
-        PanelToolTip {
-          visible: rightMouse.containsMouse || row.forgetFocused
-          text: "Forget network"
-          fontFamily: root.bar.fontFamily
+          readonly property bool hot: disconnectMouse.containsMouse && enabled
+
+          BorderSurface {
+            anchors.fill: parent
+            visible: disconnectBtn.hot
+            color: disconnectMouse.pressed ? Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.15) : "transparent"
+            radius: Style.cornerRadius
+            borderSpec: Border.controlSpec("hover-cursor", root.bar.foreground, ThemeColor.accent)
+            Behavior on color { ColorAnimation { duration: 80 } }
+          }
+
+          Text {
+            id: disconnectText
+            anchors.centerIn: parent
+            text: "Disconnect"
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+            color: disconnectBtn.hot ? root.bar.foreground : Qt.darker(root.bar.foreground, 1.4)
+          }
+
+          MouseArea {
+            id: disconnectMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            acceptedButtons: Qt.LeftButton
+            cursorShape: Qt.PointingHandCursor
+            onClicked: if (row.net) root.disconnectRow(row.net.ssid)
+          }
         }
       }
 
@@ -1657,8 +1618,8 @@ Panel {
         spacing: Style.space(1)
         anchors.left: networkIcon.right
         anchors.leftMargin: Style.space(10)
-        anchors.right: rightAction.visible ? rightAction.left : parent.right
-        anchors.rightMargin: rightAction.visible ? Style.space(8) : 0
+        anchors.right: rightActions.visible ? rightActions.left : parent.right
+        anchors.rightMargin: rightActions.visible ? Style.space(8) : 0
         anchors.verticalCenter: parent.verticalCenter
 
         Text {
@@ -1667,6 +1628,7 @@ Panel {
           color: root.bar.foreground
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.body
+          font.bold: row.isConnected
           elide: Text.ElideRight
           width: parent.width
         }
@@ -1679,7 +1641,6 @@ Panel {
           // so rows without status keep a tight one-line look.
           text: row.statusText
           visible: row.statusText !== ""
-          height: visible ? implicitHeight : 0
           color: row.statusColor
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.caption

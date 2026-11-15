@@ -40,15 +40,14 @@ PanelWindow {
   required property Item anchorItem
   required property QtObject bar
   property var owner: null
-  property int margin: Style.gapsOut
+  property int margin: 10
   property int padding: Style.spacing.popupPadding
   property int contentWidth: Style.space(280)
   property int contentHeight: Style.space(200)
   property var borderSpec: Border.surfaceSpec("popups", "border", ThemeColor.popups.border, Math.max(1, Style.space(2)))
   property bool centerOnBar: false
   property bool open: false
-  property int gap: Style.gapsOut  // distance between bar edge and panel
-  property bool popoutSwitching: false
+  property int gap: 10  // distance between bar edge and panel
   property bool popoutSwitchClosing: false
   property bool focusPrimed: false
 
@@ -84,7 +83,7 @@ PanelWindow {
   // --- screen + lifetime ---------------------------------------------------
 
   screen: anchorWindow ? anchorWindow.screen : null
-  visible: open || card.opacity > 0 || popoutSwitching
+  visible: open || card.opacity > 0
   color: "transparent"
   exclusionMode: ExclusionMode.Ignore
 
@@ -262,12 +261,9 @@ PanelWindow {
     if (!bar) return
     if (open) {
       popoutSwitchClosing = false
-      popoutSwitching = bar.activePopout && bar.activePopout !== coordinatorKey
       bar.requestPopout(coordinatorKey)
-      if (popoutSwitching) popoutSwitchTimer.restart()
     } else {
       popoutSwitchClosing = !!(owner && owner.popoutSwitchClosing)
-      popoutSwitching = false
       if (bar.activePopout === coordinatorKey) bar.releasePopout(coordinatorKey)
       if (popoutSwitchClosing) closeSwitchTimer.restart()
     }
@@ -303,12 +299,6 @@ PanelWindow {
     // immediate hide/re-summon acceptance case.
     interval: 75
     onTriggered: if (root.open) root.focusPrimed = true
-  }
-
-  Timer {
-    id: popoutSwitchTimer
-    interval: 150
-    onTriggered: root.popoutSwitching = false
   }
 
   Timer {
@@ -435,11 +425,11 @@ PanelWindow {
     borderSpec: root.borderSpec
     padding: root.padding
     radius: Style.cornerRadius
-    opacity: root.open || root.popoutSwitching ? 1.0 : 0
+    opacity: root.open ? 1.0 : 0
     layer.enabled: card.opacity < 1.0
 
     Behavior on y {
-      enabled: !root.popoutSwitching && !root.popoutSwitchClosing
+      enabled: !root.popoutSwitchClosing
       NumberAnimation {
         duration: root.open ? 300 : 200
         easing.type: root.open ? Easing.OutCubic : Easing.InQuad
@@ -447,7 +437,7 @@ PanelWindow {
     }
 
     Behavior on opacity {
-      enabled: !root.popoutSwitching && !root.popoutSwitchClosing
+      enabled: !root.popoutSwitchClosing
       NumberAnimation {
         duration: root.open ? 300 : 200
         easing.type: root.open ? Easing.OutCubic : Easing.InQuad
@@ -507,12 +497,6 @@ PanelWindow {
       anchors.rightMargin: card.contentRightInset
       anchors.bottomMargin: card.contentBottomInset
       anchors.leftMargin: card.contentLeftInset
-      opacity: root.popoutSwitching ? (root.open ? 1.0 : 0) : 1.0
-
-      Behavior on opacity {
-        enabled: root.popoutSwitching
-        NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
-      }
     }
   }
 }

@@ -18,7 +18,6 @@ ShellRoot {
   // own empty copies.
   property PluginRegistry pluginRegistry: PluginRegistry { }
   property BarWidgetRegistry barWidgetRegistry: BarWidgetRegistry { }
-  property AppLibrary appLibrary: AppLibrary { }
 
   property string home: Quickshell.env("HOME")
 
@@ -283,7 +282,6 @@ ShellRoot {
   property var _pluginBarEntryShellApis: ({})
   property var _pluginRegistryApis: ({})
   property var _pluginBarWidgetRegistryApis: ({})
-  property var _pluginAppLibraryApis: ({})
   property var _pluginBarStateApis: ({})
   property var _pluginFirstPartyServiceApis: ({})
 
@@ -300,11 +298,6 @@ ShellRoot {
   Component {
     id: pluginBarWidgetRegistryApiComponent
     PluginBarWidgetRegistryApi { }
-  }
-
-  Component {
-    id: pluginAppLibraryApiComponent
-    PluginAppLibraryApi { }
   }
 
   Component {
@@ -368,16 +361,7 @@ ShellRoot {
   }
 
   function pluginCloneMaySummon(manifest, requestedId) {
-    var metadata = manifest && Util.isPlainObject(manifest.hyprvibe) ? manifest.hyprvibe : null
-    var sourceId = metadata ? String(metadata.clonedFrom || "") : ""
-    var allowed = {
-      "hyprvibe.audio": ["hyprvibe.osd"],
-      "hyprvibe.media": ["hyprvibe.osd"],
-      "hyprvibe.monitor": ["hyprvibe.osd"],
-      "hyprvibe.network": ["hyprvibe.speedtest", "hyprvibe.wifiqr"]
-    }
-    var targets = allowed[sourceId] || []
-    return targets.indexOf(String(requestedId || "")) !== -1
+    return false
   }
 
   function pluginOwnsTarget(pluginId, requestedId) {
@@ -416,26 +400,6 @@ ShellRoot {
       if (Util.isPlainObject(scoped.bar)) config.bar = JSON.parse(JSON.stringify(scoped.bar))
     })
     return true
-  }
-
-  function pluginAppLibraryFor(cacheKey, pluginId) {
-    if (_pluginAppLibraryApis[cacheKey]) return _pluginAppLibraryApis[cacheKey]
-    var api = pluginAppLibraryApiComponent.createObject(null, {
-      ownerPluginId: pluginId,
-      _entryName: function(entry) { return shell.appLibrary.entryName(entry) },
-      _entrySubtext: function(entry) { return shell.appLibrary.entrySubtext(entry) },
-      _sortedEntries: function(query) { return shell.appLibrary.sortedEntries(query) },
-      _iconSource: function(icon) { return shell.appLibrary.iconSource(icon) },
-      _refreshIcons: function() { shell.appLibrary.refreshIcons() },
-      _launch: function(desktopId, name) { shell.appLibrary.launch(desktopId, name) },
-      _remove: function(desktopId, name) { shell.appLibrary.remove(desktopId, name) }
-    })
-    if (!api) return null
-    var next = ({})
-    for (var id in _pluginAppLibraryApis) next[id] = _pluginAppLibraryApis[id]
-    next[cacheKey] = api
-    _pluginAppLibraryApis = next
-    return api
   }
 
   function pluginBarStateFor(cacheKey, pluginId) {
@@ -539,7 +503,6 @@ ShellRoot {
   function revokePluginShellApi(cacheKey) {
     var key = String(cacheKey || "")
     if (!key) return
-    _pluginAppLibraryApis = shell.cacheWithoutKey(_pluginAppLibraryApis, key, true)
     _pluginFirstPartyServiceApis = shell.cacheWithoutPrefix(_pluginFirstPartyServiceApis, key + "::")
     _pluginBarEntryShellApis = shell.cacheWithoutPrefix(_pluginBarEntryShellApis, key + ":")
     _pluginShellApis = shell.cacheWithoutKey(_pluginShellApis, key, true)
@@ -577,8 +540,6 @@ ShellRoot {
 
     var api = pluginShellApiComponent.createObject(null, {
       pluginId: key,
-      appLibrary: shell.manifestHasKind(manifest, "menu")
-        ? shell.pluginAppLibraryFor(cacheKey, key) : null,
       bar: shell.pluginBarStateFor(cacheKey, key),
       barConfig: shell.publicBarConfig(),
       idleConfig: shell.publicIdleConfigFor(manifest),
@@ -801,14 +762,6 @@ ShellRoot {
       else if (widgetApi && typeof widgetApi.destroy === "function") widgetApi.destroy()
     }
     _pluginBarWidgetRegistryApis = widgetNext
-
-    var appNext = ({})
-    for (var appKey in _pluginAppLibraryApis) {
-      var appApi = _pluginAppLibraryApis[appKey]
-      if (shell.pluginApiActive(appApi, plugins)) appNext[appKey] = appApi
-      else if (appApi && typeof appApi.destroy === "function") appApi.destroy()
-    }
-    _pluginAppLibraryApis = appNext
 
     var barStateNext = ({})
     for (var barStateKey in _pluginBarStateApis) {
@@ -1037,14 +990,6 @@ ShellRoot {
   Connections {
     target: shell.barWidgetRegistry
     function onChanged() { shell.syncPluginApis() }
-  }
-
-  Connections {
-    target: shell.appLibrary
-    function onAppsChanged() {
-      for (var id in shell._pluginAppLibraryApis)
-        shell._pluginAppLibraryApis[id].appsChanged()
-    }
   }
 
   // Writes inline settings to a bar layout entry or top-level plugin entry in
@@ -1500,62 +1445,6 @@ ShellRoot {
       comp.statusChanged.connect(finalize)
     } else {
       finalize()
-    }
-  }
-
-  // --------------------------------------------------- image selector IPC
-
-  function imagePickerItem() {
-    var loader = panelLoaders["hyprvibe.image-picker"]
-    return loader && loader.item ? loader.item : null
-  }
-
-  IpcHandler {
-    target: "image-selector"
-
-    function open(imageDirs: string,
-                  imageRowsB64: string,
-                  selectedImage: string,
-                  selectionFile: string,
-                  doneFile: string,
-                  showLabels: string,
-                  filterable: string): string {
-      var payload = JSON.stringify({
-        imageDirs: imageDirs,
-        imageRows: Util.decodeBase64(imageRowsB64),
-        selectedImage: selectedImage,
-        selectionFile: selectionFile,
-        doneFile: doneFile,
-        showLabels: showLabels,
-        filterable: filterable
-      })
-      return shell.summon("hyprvibe.image-picker", payload) ? "ok" : "unknown"
-    }
-
-    function preload(imageRowsB64: string,
-                     selectedImage: string,
-                     showLabels: string,
-                     filterable: string): string {
-      var picker = shell.imagePickerItem()
-      if (picker && typeof picker.preloadRows === "function") {
-        picker.preloadRows(Util.decodeBase64(imageRowsB64), selectedImage,
-                           showLabels, filterable)
-      }
-      return "ok"
-    }
-
-    function cancel(doneFile: string): string {
-      var picker = shell.imagePickerItem()
-      if (picker && typeof picker.closeSelector === "function") {
-        picker.closeSelector(doneFile || "")
-      } else {
-        shell.hide("hyprvibe.image-picker")
-      }
-      return "ok"
-    }
-
-    function ping(): string {
-      return "ok"
     }
   }
 

@@ -1,6 +1,5 @@
 hl.on("hyprland.start", function()
     hl.exec_cmd(os.getenv("HOME") .. "/.config/hypr/scripts/wallpaper-changer.sh &")
-    hl.exec_cmd("nm-applet &")
     hl.exec_cmd("quickshell &")
     hl.exec_cmd("/usr/lib/polkit-kde-authentication-agent-1 &")
     hl.exec_cmd("hypridle")

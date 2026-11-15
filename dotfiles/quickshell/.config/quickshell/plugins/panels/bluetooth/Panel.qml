@@ -67,22 +67,11 @@ Panel {
     return "󰂯"
   }
 
-  property int phraseIndex: 0
-  readonly property var activePhrases: [
-    "Untangling wires",
-    "Streaming vikings",
-    "Pairing mysteries",
-    "Herding headsets",
-    "Taming radios",
-    "Summoning speakers",
-    "Wrangling codecs",
-    "Polishing packets"
-  ]
-  readonly property bool rotatingPhrases: adapter && adapter.enabled
   readonly property string heroStatusText: {
     if (!adapter) return "No adapter"
     if (!adapter.enabled) return "Turned Off"
-    return activePhrases[phraseIndex % activePhrases.length]
+    if (scanning) return "Scanning..."
+    return ""
   }
 
   // Single cursor model shared by keyboard and mouse. Sections:
@@ -134,7 +123,7 @@ Panel {
   function sectionVisible(section) {
     if (section === "connected") return connectedDevices.length > 0
     if (section === "known") return knownDevices.length > 0
-    if (section === "discovered") return adapter && adapter.discovering && discoveredDevices.length > 0
+    if (section === "discovered") return !root.scanning && adapter && adapter.discovering && discoveredDevices.length > 0
     return false
   }
 
@@ -405,7 +394,7 @@ Panel {
     if (focusSection === "connected" || focusSection === "known") {
       var dev = deviceAt(focusSection, selectedIndex)
       if (!dev) return
-      if (dev.connected) disconnectDevice(dev)
+      if (dev.connected) return
       else connectDevice(dev)
       return
     }
@@ -669,7 +658,7 @@ Panel {
     id: scanProc
     command: ["hyprvibe-bluetooth-device", "scan"]
     onExited: function(exitCode, exitStatus) {
-      root.scanning = false
+      if (!scanTimer.running) root.scanning = false
     }
   }
 
@@ -710,38 +699,6 @@ Panel {
     onTriggered: root.switchPendingAudioOutput()
   }
 
-  Timer {
-    id: phraseTimer
-    interval: 2800
-    running: root.opened && root.rotatingPhrases
-    repeat: true
-    onTriggered: phraseSwap.restart()
-  }
-
-  SequentialAnimation {
-    id: phraseSwap
-    PropertyAnimation {
-      target: heroStatus; property: "opacity"
-      to: 0.0; duration: 180; easing.type: Easing.OutQuad
-    }
-    ScriptAction {
-      script: root.phraseIndex = (root.phraseIndex + 1) % root.activePhrases.length
-    }
-    PropertyAnimation {
-      target: heroStatus; property: "opacity"
-      to: 1.0; duration: 260; easing.type: Easing.InQuad
-    }
-  }
-
-  Connections {
-    target: root
-    function onRotatingPhrasesChanged() {
-      if (!root.rotatingPhrases) {
-        phraseSwap.stop()
-        heroStatus.opacity = 1.0
-      }
-    }
-  }
 
   // Not adapter.enabled: that writes BlueZ's Powered, which nothing persists, so
   // the adapter came back on at the next boot. hyprvibe-bluetooth-power moves the
@@ -859,22 +816,28 @@ Panel {
                 borderSpec: Border.controlSpec("hover-cursor", root.bar.foreground, ThemeColor.accent)
               }
 
-              // Clickable icon centered inside (no color change on hover)
+              // Clickable icon centered inside (spins and mutes while scanning)
               Text {
                 id: refreshIcon
                 anchors.centerIn: parent
+                width: Style.font.icon
+                height: Style.font.icon
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
                 text: ""
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.icon
-                color: refreshButton.enabled ? root.bar.foreground : Qt.darker(root.bar.foreground, 2.0)
+                color: root.scanning ? ThemeColor.muted : (refreshButton.hot ? ThemeColor.accent : root.bar.foreground)
                 textFormat: Text.PlainText
+                transformOrigin: Item.Center
 
-                NumberAnimation on rotation {
+                RotationAnimation on rotation {
                   running: root.scanning
                   from: 0
                   to: 360
                   duration: 800
                   loops: Animation.Infinite
+                  direction: RotationAnimation.Clockwise
                 }
 
                 onRotationChanged: {
@@ -895,8 +858,8 @@ Panel {
               }
 
               PanelToolTip {
-                visible: mouseArea.containsMouse
-                text: root.scanning ? "Scanning devices…" : "Scan for devices"
+                visible: mouseArea.containsMouse && refreshButton.enabled
+                text: "Scan for devices"
                 fontFamily: root.bar.fontFamily
               }
             }
@@ -942,7 +905,8 @@ Panel {
               id: heroStatus
               textFormat: Text.PlainText
               text: root.heroStatusText.toUpperCase()
-              color: Qt.darker(root.bar.foreground, 1.4)
+              visible: text !== ""
+              color: root.scanning ? ThemeColor.muted : Qt.darker(root.bar.foreground, 1.4)
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.caption
               font.bold: true
@@ -996,6 +960,7 @@ Panel {
         // actually clipped — never lurches under a hovering mouse.
         ListView {
           id: deviceListView
+          visible: root.scrollRows.length > 0
           width: parent.width
           height: Math.min(contentHeight, Style.space(400))
           spacing: Style.space(10)
@@ -1057,7 +1022,7 @@ Panel {
 
         Text {
           textFormat: Text.PlainText
-          visible: root.connectedDevices.length === 0 && root.scrollRows.length === 0
+          visible: !root.scanning && root.connectedDevices.length === 0 && root.scrollRows.length === 0
           text: !root.adapter ? "No Bluetooth adapter"
               : !root.adapter.enabled ? "Turn Bluetooth on to scan"
               : "Scanning for devices…"
@@ -1097,9 +1062,8 @@ Panel {
 
     hasCursor: rowSelected && !root.actionFocused && !row.isPromptOpen
     current: isConnected
+    pressed: rowMouse.pressed
     foreground: root.bar.foreground
-    fill: root.hoverFill
-    currentFill: root.selectedFill
 
     readonly property string statusText: {
       if (!dev) return ""
@@ -1130,8 +1094,8 @@ Panel {
       anchors.top: parent.top
       height: rowContent.implicitHeight + Style.spacing.rowPaddingX
       hoverEnabled: true
-      acceptedButtons: Qt.LeftButton | Qt.RightButton
-      cursorShape: row.dev ? Qt.PointingHandCursor : Qt.ArrowCursor
+      acceptedButtons: Qt.LeftButton
+      cursorShape: row.dev && !row.isConnected ? Qt.PointingHandCursor : Qt.ArrowCursor
 
       onContainsMouseChanged: if (containsMouse) {
         root.cursorActive = true
@@ -1144,18 +1108,13 @@ Panel {
         if (row.isPromptOpen) return
         var dev = root.deviceFor(row)
         if (!dev) return
-        if (mouse.button === Qt.RightButton) {
-          if (row.isConnected) root.disconnectDevice(dev)
-          else if (!row.isDiscovered) root.forgetDevice(dev)
-          return
-        }
-        if (row.isConnected) root.disconnectDevice(dev)
-        else root.connectDevice(dev)
+        if (row.isConnected) return
+        root.connectDevice(dev)
       }
     }
 
     PanelToolTip {
-      visible: row.actionTooltip !== "" && rowMouse.containsMouse && !root.actionFocused && !row.isPromptOpen
+      visible: !row.isConnected && row.actionTooltip !== "" && rowMouse.containsMouse && !root.actionFocused && !row.isPromptOpen
       text: row.actionTooltip
       fontFamily: root.bar.fontFamily
     }
@@ -1168,7 +1127,7 @@ Panel {
       anchors.topMargin: Style.spacing.rowPaddingX / 2
       anchors.leftMargin: Style.space(10)
       anchors.rightMargin: Style.space(10)
-      implicitHeight: Math.max(deviceIcon.implicitHeight, info.implicitHeight, forgetBtn.implicitHeight)
+      implicitHeight: Math.max(deviceIcon.implicitHeight, info.implicitHeight, rightActions.implicitHeight)
 
       Text {
         id: deviceIcon
@@ -1186,8 +1145,8 @@ Panel {
         spacing: Style.space(1)
         anchors.left: deviceIcon.right
         anchors.leftMargin: Style.space(10)
-        anchors.right: forgetBtn.visible ? forgetBtn.left : parent.right
-        anchors.rightMargin: forgetBtn.visible ? Style.space(8) : 0
+        anchors.right: rightActions.visible ? rightActions.left : parent.right
+        anchors.rightMargin: rightActions.visible ? Style.space(8) : 0
         anchors.verticalCenter: parent.verticalCenter
 
         Text {
@@ -1196,6 +1155,7 @@ Panel {
           color: root.bar.foreground
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.body
+          font.bold: row.isConnected
           elide: Text.ElideRight
           width: parent.width
         }
@@ -1211,31 +1171,102 @@ Panel {
         }
       }
 
-      PanelActionButton {
-        id: forgetBtn
+      Row {
+        id: rightActions
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
-        visible: row.showForgetButton && !row.isPromptOpen
-        iconText: "󰅙"
-        tooltipText: "Forget"
-        foreground: root.bar.foreground
-        hoverColor: root.bar.foreground
-        fontFamily: root.bar.fontFamily
-        hasCursor: row.rowSelected && root.actionFocused
-        onHovered: function(isHovered) {
-          if (!isHovered) {
-            if (rowMouse.containsMouse) root.actionFocused = false
-            return
+        spacing: Style.space(6)
+
+        // Unpair text button
+        Item {
+          id: unpairBtn
+          visible: row.forgetAvailable && !row.isPromptOpen
+          implicitWidth: unpairText.implicitWidth + Style.space(12)
+          implicitHeight: unpairText.implicitHeight + Style.space(6)
+          anchors.verticalCenter: parent.verticalCenter
+
+          readonly property bool hot: (unpairMouse.containsMouse || (row.rowSelected && root.actionFocused)) && enabled
+
+          BorderSurface {
+            anchors.fill: parent
+            visible: unpairBtn.hot
+            color: unpairMouse.pressed ? Qt.rgba(root.bar.urgent.r, root.bar.urgent.g, root.bar.urgent.b, 0.15) : "transparent"
+            radius: Style.cornerRadius
+            borderSpec: Border.controlSpec("hover-cursor", root.bar.urgent, root.bar.urgent)
+            Behavior on color { ColorAnimation { duration: 80 } }
           }
-          root.cursorActive = true
-          root.focusSection = row.sectionName
-          root.selectedIndex = row.rowIndex
-          root.actionFocused = true
+
+          Text {
+            id: unpairText
+            anchors.centerIn: parent
+            text: "Unpair"
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+            color: unpairBtn.hot ? root.bar.urgent : Qt.darker(root.bar.foreground, 1.4)
+          }
+
+          MouseArea {
+            id: unpairMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            acceptedButtons: Qt.LeftButton
+            cursorShape: Qt.PointingHandCursor
+            onContainsMouseChanged: if (containsMouse) {
+              root.cursorActive = true
+              root.focusSection = row.sectionName
+              root.selectedIndex = row.rowIndex
+              root.actionFocused = true
+            }
+            onClicked: {
+              var dev = root.deviceFor(row)
+              if (!dev) return
+              root.forgetDevice(dev)
+            }
+          }
         }
-        onClicked: {
-          var dev = root.deviceFor(row)
-          if (!dev) return
-          root.forgetDevice(dev)
+
+        // Disconnect text button (rightmost)
+        Item {
+          id: disconnectBtn
+          visible: row.isConnected && !row.isPromptOpen
+          implicitWidth: disconnectText.implicitWidth + Style.space(12)
+          implicitHeight: disconnectText.implicitHeight + Style.space(6)
+          anchors.verticalCenter: parent.verticalCenter
+
+          readonly property bool hot: disconnectMouse.containsMouse && enabled
+
+          BorderSurface {
+            anchors.fill: parent
+            visible: disconnectBtn.hot
+            color: disconnectMouse.pressed ? Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.15) : "transparent"
+            radius: Style.cornerRadius
+            borderSpec: Border.controlSpec("hover-cursor", root.bar.foreground, ThemeColor.accent)
+            Behavior on color { ColorAnimation { duration: 80 } }
+          }
+
+          Text {
+            id: disconnectText
+            anchors.centerIn: parent
+            text: "Disconnect"
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+            color: disconnectBtn.hot ? root.bar.foreground : Qt.darker(root.bar.foreground, 1.4)
+          }
+
+          MouseArea {
+            id: disconnectMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            acceptedButtons: Qt.LeftButton
+            cursorShape: Qt.PointingHandCursor
+            onClicked: {
+              var dev = root.deviceFor(row)
+              if (!dev) return
+              root.disconnectDevice(dev)
+            }
+          }
         }
       }
     }

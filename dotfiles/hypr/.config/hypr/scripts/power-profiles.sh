@@ -22,9 +22,9 @@ c_save="$c_dim"
 [[ "$active" == "balanced" ]] && c_bal="$c_active"
 [[ "$active" == "power-saver" ]] && c_save="$c_active"
 
-PERF="<span color=\"$c_perf\">  Performance</span>"
+PERF="<span color=\"$c_perf\">  Performance</span>"
 BAL="<span color=\"$c_bal\">  Balanced</span>"
-SAVE="<span color=\"$c_save\">󰤄  Power Saver</span>"
+SAVE="<span color=\"$c_save\">󰌪  Power Saver</span>"
 
 rofi_cmd() {
   rofi -dmenu \
@@ -42,7 +42,7 @@ run_cmd() {
   case $1 in
   --performance)
     powerprofilesctl set performance
-    notify-send -t 3000 "Power Profile" "Set to  Performance Mode"
+    notify-send -t 3000 "Power Profile" "Set to  Performance Mode"
     ;;
   --balanced)
     powerprofilesctl set balanced
@@ -50,7 +50,7 @@ run_cmd() {
     ;;
   --power-saver)
     powerprofilesctl set power-saver
-    notify-send -t 3000 "Power Profile" "Set to 󰤄 Power Saver Mode"
+    notify-send -t 3000 "Power Profile" "Set to 󰌪 Power Saver Mode"
     
     STATE=$(hyprctl getoption misc.vrr -j 2>/dev/null | grep '"int": 0' || true)
     if [ -z "$STATE" ]; then

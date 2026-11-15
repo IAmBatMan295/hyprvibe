@@ -15,7 +15,6 @@ Item {
   property string ipcTarget: ""
   property bool manageIpc: true
   property alias controller: panelController
-  property bool popoutSwitching: false
   property bool popoutSwitchClosing: false
 
   readonly property bool opened: panelController.open

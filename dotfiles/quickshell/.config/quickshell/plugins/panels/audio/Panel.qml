@@ -17,8 +17,6 @@ Panel {
   readonly property var source: Pipewire.defaultAudioSource
   readonly property var nodes: Pipewire.nodes ? Pipewire.nodes.values : []
   readonly property var mprisPlayers: Mpris.players ? Mpris.players.values : []
-  readonly property var mediaService: bar?.shell?.firstPartyServiceFor("hyprvibe.media")
-  readonly property var activeMediaPlayer: mediaService ? mediaService.activePlayer : null
 
   readonly property var candidateSinks: {
     var list = []
@@ -430,14 +428,6 @@ Panel {
     return volume
   }
 
-  function showVolumeOsd(volume) {
-    if (!bar || !bar.shell) return
-    bar.shell.summon("hyprvibe.osd", JSON.stringify({
-      icon: outputIcon(volume),
-      value: Math.round(volume * 100)
-    }))
-  }
-
   function setInputVolume(v) {
     if (!source || !source.audio) return
     source.audio.volume = Math.max(0, Math.min(1, v))
@@ -566,10 +556,6 @@ Panel {
     return Model.streamLabel(node, mprisPlayers, displayAudioStreams)
   }
 
-  function streamRepresentsPlayer(node, player) {
-    return Model.streamRepresentsPlayer(node, player, mprisPlayers, displayAudioStreams)
-  }
-
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
@@ -644,8 +630,7 @@ Panel {
       var wheel = Util.wheelSteps(root.wheelAccumulator, delta)
       root.wheelAccumulator = wheel.remainder
       if (wheel.steps === 0) return
-      var volume = root.setOutputVolume(root.outputVolume + wheel.steps * 0.05)
-      root.showVolumeOsd(volume)
+      root.setOutputVolume(root.outputVolume + wheel.steps * 0.05)
     }
   }
 
@@ -769,6 +754,7 @@ Panel {
                   outputSlider.dragging ? outputSlider.liveValue : root.outputVolume,
                   root.outputMuted
                 ).toUpperCase()
+                visible: text !== ""
                 color: Qt.darker(root.bar.foreground, 1.4)
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.caption
@@ -1021,9 +1007,8 @@ Panel {
     hasCursor: root.cursorActive && root.focusSection === "output" && root.selectedIndex === rowIndex
     onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(sinkRow)
     current: isActive
+    pressed: sinkMouse.pressed
     foreground: root.bar.foreground
-    fill: root.hoverFill
-    currentFill: root.selectedFill
     implicitHeight: sinkInner.implicitHeight + Style.spacing.xl
 
     Row {
@@ -1060,6 +1045,7 @@ Panel {
     }
 
     MouseArea {
+      id: sinkMouse
       anchors.fill: parent
       hoverEnabled: true
       cursorShape: Qt.PointingHandCursor
@@ -1082,9 +1068,8 @@ Panel {
     hasCursor: root.cursorActive && root.focusSection === "input" && root.selectedIndex === rowIndex
     onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(sourceRow)
     current: isActive
+    pressed: sourceMouse.pressed
     foreground: root.bar.foreground
-    fill: root.hoverFill
-    currentFill: root.selectedFill
     implicitHeight: sourceInner.implicitHeight + Style.spacing.xl
 
     Row {
@@ -1121,6 +1106,7 @@ Panel {
     }
 
     MouseArea {
+      id: sourceMouse
       anchors.fill: parent
       hoverEnabled: true
       cursorShape: Qt.PointingHandCursor
@@ -1144,14 +1130,13 @@ Panel {
 
     readonly property real streamVolume: node && node.audio ? node.audio.volume : 0
     readonly property bool streamMuted: node && node.audio ? node.audio.muted : false
-    readonly property bool isActive: root.streamRepresentsPlayer(node, root.activeMediaPlayer)
+    readonly property bool isActive: false
 
     hasCursor: root.cursorActive && root.focusSection === "streams" && root.selectedIndex === rowIndex
     onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(streamRow)
     current: isActive
+    pressed: false
     foreground: root.bar.foreground
-    fill: root.hoverFill
-    currentFill: root.selectedFill
     implicitHeight: streamColumn.implicitHeight + Style.spacing.xl
 
     Column {
@@ -1236,6 +1221,7 @@ Panel {
     }
 
     MouseArea {
+      id: streamMouse
       anchors.fill: parent
       hoverEnabled: true
       acceptedButtons: Qt.NoButton

@@ -1330,21 +1330,22 @@ Item {
           var popupWidth = tooltipWindow.implicitWidth
           var popupHeight = tooltipWindow.implicitHeight
           var localX = target.width / 2 - popupWidth / 2
-          var localY = target.height + 6
+          var localY = barWindow.height + 10
 
           if (root.position === "bottom") {
-            localY = -popupHeight - 6
+            localY = -popupHeight - 10
           } else if (root.position === "left") {
-            localX = target.width + 6
+            localX = barWindow.width + 10
             localY = target.height / 2 - popupHeight / 2
           } else if (root.position === "right") {
-            localX = -popupWidth - 6
+            localX = -popupWidth - 10
             localY = target.height / 2 - popupHeight / 2
           }
 
-          var point = barWindow.contentItem.mapFromItem(target, localX, localY)
-          tooltipAnchor.rect.x = Math.round(point.x)
-          tooltipAnchor.rect.y = Math.round(point.y)
+          var point = barWindow.contentItem.mapFromItem(target, localX, 0)
+          var clampX = Math.max(10, Math.min(point.x, barWindow.width - popupWidth - 10))
+          tooltipAnchor.rect.x = Math.round(clampX)
+          tooltipAnchor.rect.y = Math.round(localY)
         }
       }
 
