@@ -74,7 +74,6 @@ BarWidget {
     id: button
     anchors.fill: parent
     bar: root.bar
-    fontSize: 16
     text: root.currentIcon
     tooltipText: "Brightness: " + root.percent + "%"
 

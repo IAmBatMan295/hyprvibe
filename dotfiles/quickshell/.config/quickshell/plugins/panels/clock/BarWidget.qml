@@ -54,7 +54,7 @@ BarWidget {
     hasVisualContent: root.vertical ? root.verticalLines.length > 0 : text !== ""
     fixedHeight: root.vertical ? root.verticalLines.length * Style.bar.iconSlot : -1
     horizontalMargin: 8
-    verticalPadding: 4
+    verticalPadding: 2
     pressable: false
     interactive: false
     highlightOnHover: false

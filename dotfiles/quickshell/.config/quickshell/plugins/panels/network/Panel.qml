@@ -778,7 +778,6 @@ Panel {
     id: button
     anchors.fill: parent
     bar: root.bar
-    fontSize: 16
     text: root.icon
     tooltipText: root.kind === "wifi"
       ? ((root.connectedWifiNetwork ? root.connectedWifiNetwork.name : "Wi-Fi") + (root.signalStrength >= 0 ? " (" + root.signalStrength + "%)" : ""))
@@ -906,7 +905,7 @@ Panel {
       anchors.left: parent.left
       anchors.right: parent.right
       anchors.top: parent.top
-      spacing: Style.space(12)
+      spacing: Style.space(14)
 
       // ---------- Hero: network icon · SSID + state · actions ----------
       Item {

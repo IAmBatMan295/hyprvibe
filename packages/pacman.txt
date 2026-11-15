@@ -103,6 +103,7 @@ gd
 gdb
 gdb-common
 gegl
+ggml-vulkan
 ghostscript
 gimp
 git
@@ -306,6 +307,7 @@ libyuv
 linux-cachyos
 linux-cachyos-headers
 linux-firmware
+llama-cpp
 llhttp
 logrotate
 lsb-release
@@ -341,7 +343,6 @@ nano
 nano-syntax-highlighting
 neovim
 netctl
-network-manager-applet
 networkmanager
 networkmanager-openvpn
 nfs-utils
@@ -588,7 +589,6 @@ xorg-xset
 xorg-xwayland
 xsel
 yay
-zed
 zip
 zoxide
 zsh

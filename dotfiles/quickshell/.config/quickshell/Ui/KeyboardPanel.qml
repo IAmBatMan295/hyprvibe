@@ -40,14 +40,14 @@ PanelWindow {
   required property Item anchorItem
   required property QtObject bar
   property var owner: null
-  property int margin: 10
+  property int margin: Style.space(10)
   property int padding: Style.spacing.popupPadding
   property int contentWidth: Style.space(280)
   property int contentHeight: Style.space(200)
   property var borderSpec: Border.surfaceSpec("popups", "border", ThemeColor.popups.border, Math.max(1, Style.space(2)))
   property bool centerOnBar: false
   property bool open: false
-  property int gap: 10  // distance between bar edge and panel
+  property int gap: Style.space(10)  // distance between bar edge and panel
   property bool popoutSwitchClosing: false
   property bool focusPrimed: false
 

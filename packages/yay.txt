@@ -6,6 +6,7 @@ oh-my-posh-bin
 preload
 puddletag
 rsgain
+stable-diffusion.cpp-vulkan-bin
 sysclet-git
 visual-studio-code-bin
 xcursor-simp1e

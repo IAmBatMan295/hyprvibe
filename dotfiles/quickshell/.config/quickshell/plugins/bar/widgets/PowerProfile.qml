@@ -73,7 +73,6 @@ BarWidget {
     id: button
     anchors.fill: parent
     bar: root.bar
-    fontSize: 14
     text: root.currentIcon
     tooltipText: root.currentTooltip
     pressable: false

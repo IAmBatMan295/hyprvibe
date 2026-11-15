@@ -1281,7 +1281,7 @@ Item {
 
     implicitWidth: root.vertical ? root.barSize : 0
     implicitHeight: root.vertical ? 0 : root.barSize
-    color: Util.alpha(root.background, 0.8)
+    color: Util.alpha(root.background, 0.85)
     surfaceFormat.opaque: false
     WlrLayershell.namespace: "hyprvibe-bar"
     WlrLayershell.layer: WlrLayer.Top
@@ -1716,7 +1716,7 @@ Item {
       visible: slot.dragSource
       anchors.fill: parent
       anchors.margins: Style.space(1)
-      color: Util.alpha(root.background, 0.8)
+      color: Util.alpha(root.background, 0.85)
       borderSpec: Border.flat(root.barForeground, 1)
       radius: Math.min(Style.cornerRadius, height / 2)
       opacity: root.transparent ? 0.22 : 0.32

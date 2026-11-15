@@ -22,6 +22,12 @@ declare -A BUILTIN_LUTGEN_MAP=(
     ["monochrome"]="grayscale-dark"
 )
 
+# Cache lutgen built-in palettes in memory
+declare -A LUTGEN_BUILTINS=()
+while IFS= read -r pname; do
+    [[ -n "$pname" ]] && LUTGEN_BUILTINS["$pname"]=1
+done < <(lutgen palette names 2>/dev/null || true)
+
 format_title() {
     local name="$1"
     local spaced="${name//[-_]/ }"
@@ -69,16 +75,30 @@ apply_lutgen() {
     local infile="$3"
     local outfile="$4"
 
+    # Optimal wallpaper parameters:
+    # -R: Gaussian RBF interpolation (eliminates color banding and artifacts)
+    # -s=192: Shape parameter (sharper detail, prevents smudging)
+    # -n=12: Nearest colors to consider (prevents accidental accent color bleed)
+    # -P: Preserve luminosity (guarantees inky blacks without foggy wash)
+    # -c: Cache generated Hald CLUT (speeds up batch wallpaper processing)
+    local lut_opts=(-R -s=192 -n=12 -P -c)
+
+    # Monochrome uses built-in pure grayscale-dark (no color hues)
+    if [[ "$slug" == "grayscale-dark" || "$slug" == "grayscale-light" || "$slug" == "monochrome" ]]; then
+        lutgen apply -p "grayscale-dark" "${lut_opts[@]}" "$infile" -o "$outfile"
+        return $?
+    fi
+
     # Check if slug is recognized by lutgen built-in palettes
-    if lutgen palette names 2>/dev/null | grep -Fxq "$slug"; then
-        lutgen apply -p "$slug" -l 12 "$infile" -o "$outfile"
+    if [[ -n "${LUTGEN_BUILTINS[$slug]:-}" ]]; then
+        lutgen apply -p "$slug" "${lut_opts[@]}" "$infile" -o "$outfile"
     else
-        # Pass dynamic custom colors from colors.toml
-        read -r -a custom_cols <<< "${PALETTE_COLORS[$idx]}"
+        # Pass dynamic custom colors from colors.toml for custom colored themes
+        read -r -a custom_cols <<< "${PALETTE_COLORS[$idx]:-}"
         if (( ${#custom_cols[@]} > 0 )); then
-            lutgen apply -l 12 "$infile" -o "$outfile" -- "${custom_cols[@]}"
+            lutgen apply "${lut_opts[@]}" "$infile" -o "$outfile" -- "${custom_cols[@]}"
         else
-            lutgen apply -p "grayscale-dark" -l 12 "$infile" -o "$outfile"
+            lutgen apply -p "grayscale-dark" "${lut_opts[@]}" "$infile" -o "$outfile"
         fi
     fi
 }
@@ -159,15 +179,37 @@ if [[ "${1:-}" == "--headless" ]]; then
     PALETTE_SLUG="${PALETTE_DATA%%|*}"
     PALETTE_NAME="${PALETTE_DATA##*|}"
 
-    COUNT=0
+    MAX_JOBS=$(nproc 2>/dev/null || echo 4)
+    STATUS_FILE=$(mktemp /tmp/theming_status.XXXXXX)
+    running=0
+
     for f in "${HEADLESS_FILES[@]}"; do
         if [[ -f "$f" ]]; then
             target_path=$(get_safe_target_path "$HEADLESS_OUT_DIR" "$f" "$PALETTE_SLUG")
-            if apply_lutgen "$PALETTE_SLUG" "$IDX" "$f" "$target_path" >/dev/null 2>&1; then
-                ((COUNT++)) || true
+            touch "$target_path"
+            (
+                if apply_lutgen "$PALETTE_SLUG" "$IDX" "$f" "$target_path" >/dev/null 2>&1; then
+                    echo 0 >> "$STATUS_FILE"
+                else
+                    echo 1 >> "$STATUS_FILE"
+                fi
+            ) &
+            ((running++)) || true
+
+            if (( running >= MAX_JOBS )); then
+                wait -n 2>/dev/null || true
+                ((running--)) || true
             fi
         fi
     done
+
+    while (( running > 0 )); do
+        wait -n 2>/dev/null || true
+        ((running--)) || true
+    done
+
+    COUNT=$(grep -c "^0$" "$STATUS_FILE" 2>/dev/null || echo 0)
+    rm -f "$STATUS_FILE"
 
     command -v notify-send >/dev/null 2>&1 && notify-send -a "${HELPER_TITLE}" "${HELPER_TITLE}" "Successfully themed $COUNT wallpaper(s) ($PALETTE_NAME)" || true
     exit 0
@@ -219,7 +261,7 @@ print_title() {
 # ------------------------------------------------------------------------------
 # Interactive Menu
 # ------------------------------------------------------------------------------
-clear
+clear 2>/dev/null || true
 print_title
 echo "  Select Palette:"
 for i in "${!PALETTES[@]}"; do
@@ -284,32 +326,54 @@ fi
 mkdir -p "$DEST_DIR"
 
 # ------------------------------------------------------------------------------
-# Process with lutgen (Zenity GUI progress bar, no log output in dialog)
+# Process with lutgen (Zenity GUI progress bar, parallel workers)
 # ------------------------------------------------------------------------------
-SUCCESS_COUNT=0
 TOTAL_FILES=${#INPUT_FILES[@]}
-CURRENT=0
+MAX_JOBS=$(nproc 2>/dev/null || echo 4)
+STATUS_FILE=$(mktemp /tmp/theming_status.XXXXXX)
 
-clear
+clear 2>/dev/null || true
 print_title
-echo "  Theming $TOTAL_FILES wallpaper(s) with $SELECTED_NAME..."
+echo "  Theming $TOTAL_FILES wallpaper(s) with $SELECTED_NAME in parallel ($MAX_JOBS workers)..."
 echo "  Follow progress in the dialog window."
 echo ""
 
 (
+    running=0
+    completed=0
     for img in "${INPUT_FILES[@]}"; do
         if [[ ! -f "$img" ]]; then
             continue
         fi
-        ((CURRENT++)) || true
-        pct=$(( CURRENT * 100 / TOTAL_FILES ))
-        echo "$pct"
-        echo "# Theming wallpaper $CURRENT of $TOTAL_FILES..."
 
         target_file=$(get_safe_target_path "$DEST_DIR" "$img" "$SELECTED_PALETTE")
-        if apply_lutgen "$SELECTED_PALETTE" "$SELECTED_IDX" "$img" "$target_file" 2>/dev/null; then
-            ((SUCCESS_COUNT++)) || true
+        touch "$target_file"
+        (
+            if apply_lutgen "$SELECTED_PALETTE" "$SELECTED_IDX" "$img" "$target_file" >/dev/null 2>&1; then
+                echo 0 >> "$STATUS_FILE"
+            else
+                echo 1 >> "$STATUS_FILE"
+            fi
+        ) &
+        ((running++)) || true
+
+        if (( running >= MAX_JOBS )); then
+            wait -n 2>/dev/null || true
+            ((running--)) || true
+            ((completed++)) || true
+            pct=$(( completed * 100 / TOTAL_FILES ))
+            echo "$pct"
+            echo "# Theming wallpapers ($completed of $TOTAL_FILES)..."
         fi
+    done
+
+    while (( running > 0 )); do
+        wait -n 2>/dev/null || true
+        ((running--)) || true
+        ((completed++)) || true
+        pct=$(( completed * 100 / TOTAL_FILES ))
+        echo "$pct"
+        echo "# Theming wallpapers ($completed of $TOTAL_FILES)..."
     done
 ) | zenity --progress \
     --title="Wallpaper Theming" \
@@ -318,6 +382,9 @@ echo ""
     --auto-close \
     --no-cancel 2>/dev/null || true
 
+SUCCESS_COUNT=$(grep -c "^0$" "$STATUS_FILE" 2>/dev/null || echo 0)
+rm -f "$STATUS_FILE"
+
 # Notify via notification daemon (Mako)
-notify-send -a "Wallpaper Theming" "Wallpaper Theming" "Successfully themed $SUCCESS_COUNT wallpaper(s) with $SELECTED_NAME" 2>/dev/null || true
+notify-send -a "${HELPER_TITLE}" "${HELPER_TITLE}" "Successfully themed $SUCCESS_COUNT wallpaper(s) with $SELECTED_NAME" 2>/dev/null || true
 exit 0

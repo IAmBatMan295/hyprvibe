@@ -728,7 +728,6 @@ Panel {
     id: button
     anchors.fill: parent
     bar: root.bar
-    fontSize: 16
     text: root.icon
     tooltipText: root.adapter && !root.adapter.enabled
       ? "Bluetooth: Disabled"
@@ -927,7 +926,7 @@ Panel {
           id: connectedList
           visible: root.connectedDevices.length > 0
           width: parent.width
-          spacing: Style.space(10)
+          spacing: Style.space(8)
 
           PanelSectionHeader {
             text: "CONNECTED"
@@ -963,7 +962,7 @@ Panel {
           visible: root.scrollRows.length > 0
           width: parent.width
           height: Math.min(contentHeight, Style.space(400))
-          spacing: Style.space(10)
+          spacing: Style.space(8)
           clip: true
           boundsBehavior: Flickable.StopAtBounds
           interactive: contentHeight > height

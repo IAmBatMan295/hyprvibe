@@ -156,7 +156,7 @@ BarWidget {
       font.pixelSize: Style.font.body
       Layout.alignment: Qt.AlignVCenter
       Layout.leftMargin: 6
-      Layout.rightMargin: 8
+      Layout.rightMargin: 6
     }
   }
 }

@@ -143,7 +143,7 @@ Panel {
     bar: root.bar
     text: Math.round(root.batteryFraction * 100) + "% " + root.batteryIcon()
     fontSize: Style.font.body
-    horizontalMargin: 6
+    horizontalMargin: 4
     verticalPadding: 2
     fixedHeight: root.bar ? root.bar.barSize : Style.bar.sizeHorizontal
     tooltipText: {
@@ -319,16 +319,25 @@ Panel {
     }
   }
 
-  component InfoPair: Row {
+  component InfoPair: Item {
     property string label: ""
     property string value: ""
 
     width: parent.width
-    spacing: Style.space(8)
+    implicitHeight: Math.max(lbl.implicitHeight, val.implicitHeight)
 
-    InfoLabel { text: label }
-    Item { width: Math.max(0, parent.width - parent.children[0].implicitWidth - parent.children[2].implicitWidth - parent.spacing * 2); height: 1 }
-    InfoValue { text: value }
+    InfoLabel {
+      id: lbl
+      text: label
+      anchors.left: parent.left
+      anchors.verticalCenter: parent.verticalCenter
+    }
+    InfoValue {
+      id: val
+      text: value
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+    }
   }
 
   component InfoLabel: Text {
