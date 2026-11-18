@@ -1,7 +1,7 @@
 [global]
     # Placement & Dynamic Dimensions
-    origin = top-right
-    offset = (10, 10)
+    origin = top-center
+    offset = (0, 10)
     width = (0, 400)
     height = (0, 200)
     scale = 0
