@@ -283,7 +283,8 @@ refresh_hyprvibe_clone() {
             return 0
         else
             log_warn "Target directory ${HYPRVIBE_TARGET_DIR} exists but is not a git repository."
-            local backup_dir="${HYPRVIBE_TARGET_DIR}.hyprvibe_bak_$(date +%s)"
+            local backup_dir
+            backup_dir="${HYPRVIBE_TARGET_DIR}.hyprvibe_bak_$(date +%s)"
             log_info "Backing up existing directory to ${backup_dir}"
             mv "$HYPRVIBE_TARGET_DIR" "$backup_dir"
         fi
@@ -340,19 +341,26 @@ start_sudo_keepalive() {
         return 1
     fi
 
-    while true; do
-        sleep 50
+    (
+        local sleep_pid=""
+        trap '[[ -n "$sleep_pid" ]] && kill "$sleep_pid" 2>/dev/null || true; exit 0' INT TERM
+        while true; do
+            sleep 50 &
+            sleep_pid=$!
+            wait "$sleep_pid" 2>/dev/null || true
+            sleep_pid=""
 
-        if ! kill -0 "$$" 2>/dev/null; then
-            exit 0
-        fi
+            if ! kill -0 "$$" 2>/dev/null; then
+                exit 0
+            fi
 
-        if ! sudo -n true 2>/dev/null; then
-            log_error "Sudo session expired during install. Stopping installer."
-            kill -TERM "$$" >/dev/null 2>&1 || true
-            exit 1
-        fi
-    done &
+            if ! sudo -n true </dev/null >/dev/null 2>&1; then
+                log_error "Sudo session expired during install. Stopping installer."
+                kill -TERM "$$" >/dev/null 2>&1 || true
+                exit 1
+            fi
+        done
+    ) </dev/null >/dev/null 2>&1 &
 
     SUDO_KEEPALIVE_PID="$!"
 }
@@ -360,8 +368,9 @@ start_sudo_keepalive() {
 stop_sudo_keepalive() {
     if [[ -n "$SUDO_KEEPALIVE_PID" ]] && kill -0 "$SUDO_KEEPALIVE_PID" 2>/dev/null; then
         kill "$SUDO_KEEPALIVE_PID" >/dev/null 2>&1 || true
+        wait "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
     fi
-    sudo -k
+    sudo -k >/dev/null 2>&1 || true
 }
 
 run_module() {
@@ -386,6 +395,11 @@ run_module() {
 manage_optional_plugins() {
     local plugins_dir="${HYPRVIBE_TARGET_DIR}/plugins"
     if [[ ! -d "$plugins_dir" ]]; then
+        return 0
+    fi
+
+    if [[ "${HYPRVIBE_AUTO_YES:-false}" == "true" ]]; then
+        log_info "Skipping optional plugins prompt under --yes."
         return 0
     fi
 

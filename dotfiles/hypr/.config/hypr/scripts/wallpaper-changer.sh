@@ -5,6 +5,7 @@ WALL_DIR="${WALL_DIR:-$HOME/Pictures/Current-Wallpapers}"
 INTERVAL=45
 STATE_FILE="$HOME/.local/state/hyprvibe/current_wallpaper"
 LOCK_FILE="${XDG_RUNTIME_DIR:-/tmp}/hyprvibe-wallpaper-changer.lock"
+PID_FILE="${WALLPAPER_PID_FILE:-${XDG_RUNTIME_DIR:-/tmp}/hyprvibe-wallpaper-changer.pid}"
 
 if ! command -v awww >/dev/null 2>&1; then
   exit 0
@@ -16,9 +17,11 @@ if ! flock -n 200; then
   exit 0
 fi
 
+printf '%s\n' "$$" > "$PID_FILE"
 mkdir -p "$(dirname "$STATE_FILE")"
 
 SLEEP_PID=""
+RELOAD_REQUESTED=0
 LAST_WALL=""
 DECK=()
 
@@ -112,8 +115,10 @@ change_wallpaper() {
 }
 
 on_usr1() {
-  # Terminate current sleep so interval resets immediately, flush deck to re-read wall dir
+  # Clear deck + LAST_WALL so theme switch applies immediately even if filenames repeat or signal hits pre-sleep
+  RELOAD_REQUESTED=1
   DECK=()
+  LAST_WALL=""
   if [[ -n "$SLEEP_PID" ]]; then
     kill "$SLEEP_PID" 2>/dev/null || true
   fi
@@ -123,6 +128,7 @@ cleanup() {
   if [[ -n "${SLEEP_PID:-}" ]]; then
     kill "$SLEEP_PID" 2>/dev/null || true
   fi
+  rm -f "$PID_FILE" 2>/dev/null || true
   exit 0
 }
 
@@ -134,7 +140,11 @@ trap 'on_usr1' SIGUSR1
 ensure_daemon
 
 while true; do
+  RELOAD_REQUESTED=0
   change_wallpaper
+  if (( RELOAD_REQUESTED == 1 )); then
+    continue
+  fi
   sleep "$INTERVAL" 200>&- &
   SLEEP_PID=$!
   wait "$SLEEP_PID" 2>/dev/null || true

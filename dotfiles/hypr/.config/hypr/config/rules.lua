@@ -11,6 +11,12 @@ hl.window_rule({
 })
 
 hl.window_rule({
+	match = { class = "^madsnake$" },
+	fullscreen = true,
+	no_anim = true,
+})
+
+hl.window_rule({
 	match = { class = "^steam_app_.*$" },
 	immediate = true,
 	no_blur = true,

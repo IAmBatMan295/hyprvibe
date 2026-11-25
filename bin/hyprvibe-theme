@@ -231,10 +231,41 @@ cmd_set() {
                 ln -sfn "$bg" "${wall_dir}/$(basename "$bg")"
             done
             local changer_script="${USER_HOME:-$HOME}/.config/hypr/scripts/wallpaper-changer.sh"
-            if pgrep -f wallpaper-changer.sh >/dev/null 2>&1; then
-                pkill -SIGUSR1 -f wallpaper-changer.sh 2>/dev/null || true
+            local pid_file="${WALLPAPER_PID_FILE:-${XDG_RUNTIME_DIR:-/tmp}/hyprvibe-wallpaper-changer.pid}"
+            local wp_pid=""
+            if [[ -r "$pid_file" ]]; then
+                wp_pid="$(<"$pid_file")"
+                if [[ -z "$wp_pid" || ! "$wp_pid" =~ ^[0-9]+$ ]] || ! kill -0 "$wp_pid" 2>/dev/null; then
+                    wp_pid=""
+                fi
+            fi
+            if [[ -z "$wp_pid" ]]; then
+                wp_pid="$(pgrep -f '(^|/)wallpaper-changer\.sh([[:space:]]|$)' 2>/dev/null | head -n 1 || true)"
+            fi
+
+            local need_start=0
+            if [[ -n "$wp_pid" ]]; then
+                if [[ -x "$changer_script" && -e "/proc/${wp_pid}" && "$changer_script" -nt "/proc/${wp_pid}" ]]; then
+                    kill -TERM "$wp_pid" 2>/dev/null || true
+                    local wait_i
+                    for ((wait_i = 0; wait_i < 20; wait_i++)); do
+                        kill -0 "$wp_pid" 2>/dev/null || break
+                        sleep 0.05
+                    done
+                    need_start=1
+                else
+                    kill -SIGUSR1 "$wp_pid" 2>/dev/null || true
+                fi
             elif [[ -x "$changer_script" ]] && command -v awww >/dev/null 2>&1 && pgrep -x Hyprland >/dev/null 2>&1; then
-                "$changer_script" &
+                need_start=1
+            fi
+
+            if (( need_start == 1 )); then
+                if command -v setsid >/dev/null 2>&1; then
+                    setsid -f "$changer_script" 9>&- </dev/null >/dev/null 2>&1
+                else
+                    "$changer_script" 9>&- </dev/null >/dev/null 2>&1 &
+                fi
             elif command -v awww >/dev/null 2>&1 && pgrep -x Hyprland >/dev/null 2>&1; then
                 if ! pgrep -x awww-daemon >/dev/null 2>&1; then
                     awww-daemon >/dev/null 2>&1 &
