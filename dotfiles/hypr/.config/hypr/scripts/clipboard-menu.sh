@@ -16,9 +16,9 @@ if [ -z "$HISTORY_SNAPSHOT" ]; then
     MENU_ITEMS="$EMPTY_MESSAGE"
 else
     # Map IDs
-    mapfile -t CLIPHIST_IDS < <(echo "$HISTORY_SNAPSHOT" | awk '{print $1}')
+    mapfile -t CLIPHIST_IDS < <(printf '%s\n' "$HISTORY_SNAPSHOT" | awk '{print $1}')
     # Format List: Strip binary tags, remove IDs, number them in single sed | awk pass
-    MENU_ITEMS=$(echo "$HISTORY_SNAPSHOT" | \
+    MENU_ITEMS=$(printf '%s\n' "$HISTORY_SNAPSHOT" | \
                  sed -E 's/\[\[ binary data (.*) \]\]/[\1]/' | \
                  awk '{$1=""; sub(/^[ \t]+/, ""); printf "%d. %s\n", NR, $0}')
 fi
@@ -26,7 +26,7 @@ fi
 FINAL_MENU=$(printf "%s\n%s" "$MENU_ITEMS" "$CLEAR_OPTION")
 
 # 3. Launch Rofi with the Card Theme
-SELECTED_ITEM=$(echo "$FINAL_MENU" | rofi -dmenu \
+SELECTED_ITEM=$(printf '%s\n' "$FINAL_MENU" | rofi -dmenu \
     -theme "${HOME}/.config/rofi/clipboard-menu.rasi" \
     -p " " \
     -i)

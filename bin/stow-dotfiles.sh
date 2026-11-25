@@ -15,7 +15,7 @@ fi
 source "$COMMON_LIB"
 
 DOTFILES_DIR="${ROOT_DIR}/dotfiles"
-USER_HOME="$(resolve_user_home)"
+USER_HOME="${USER_HOME:-$(resolve_user_home)}"
 
 PACKAGES=(
     btop
@@ -164,11 +164,15 @@ main() {
     done
 
     log_phase "Stow Apply"
-    log_info "Processing file templates..."
-    if [[ -d "${DOTFILES_DIR}/dunst/.config/dunst/dunstrc.d" ]]; then
-        mkdir -p "${USER_HOME}/.local/state/hyprvibe/current"
-        ln -sfn "${USER_HOME}/.local/state/hyprvibe/current/dunst.conf" "${DOTFILES_DIR}/dunst/.config/dunst/dunstrc.d/00-hyprvibe-theme.conf"
-    fi
+    log_info "Stowing dotfiles packages into ${USER_HOME} (--no-folding)"
+    cd "$DOTFILES_DIR"
+    rm -f "${DOTFILES_DIR}/dunst/.config/dunst/dunstrc.d/00-hyprvibe-theme.conf" 2>/dev/null || true
+    stow --no-folding -t "$USER_HOME" "${PACKAGES[@]}"
+
+    log_info "Configuring dynamic template and runtime symlinks in ${USER_HOME}"
+    mkdir -p "${USER_HOME}/.local/state/hyprvibe/current" "${USER_HOME}/.config/dunst/dunstrc.d"
+    ln -sfn "${USER_HOME}/.local/state/hyprvibe/current/dunst.conf" "${USER_HOME}/.config/dunst/dunstrc.d/00-hyprvibe-theme.conf"
+
     if [[ -f "${ROOT_DIR}/templates/xfce4/thunar.xml.template" ]]; then
         local target_thunar="${USER_HOME}/.config/xfce4/xfconf/xfce-perchannel-xml/thunar.xml"
         mkdir -p "$(dirname "$target_thunar")"
@@ -178,12 +182,9 @@ main() {
         sed "s|_USER_HOME_|${USER_HOME}|g" "${ROOT_DIR}/templates/xfce4/thunar.xml.template" > "$target_thunar"
     fi
 
-
-    log_info "Stowing dotfiles packages into ${USER_HOME}"
-    cd "$DOTFILES_DIR"
-    stow -t "$USER_HOME" "${PACKAGES[@]}"
-
     log_success "Dotfiles stow step completed successfully."
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

@@ -40,8 +40,13 @@ if [[ -f "$STATE_FILE" ]]; then
 fi
 
 get_current_fps() {
-  local rate
-  rate=$(hyprctl monitors 2>/dev/null | awk -F'[@.]' '/@/ {print $2; exit}')
+  local rate=""
+  if command -v hyprctl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+    rate=$(hyprctl monitors -j 2>/dev/null | jq -r '(([.[] | select(.focused == true)] | .[0]) // .[0] // empty) | .refreshRate // empty | floor' 2>/dev/null || true)
+  fi
+  if [[ -z "$rate" ]]; then
+    rate=$(hyprctl monitors 2>/dev/null | awk -F'[@.]' '/@/ {print $2; exit}')
+  fi
   if [[ -n "$rate" && "$rate" =~ ^[0-9]+$ && "$rate" -ge 30 ]]; then
     echo "$rate"
   else
@@ -50,7 +55,7 @@ get_current_fps() {
 }
 
 refill_deck() {
-  readarray -d '' -t DECK < <(find "$WALL_DIR" -maxdepth 1 -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.webp" \) -print0 2>/dev/null | shuf -z)
+  readarray -d '' -t DECK < <(find -L "$WALL_DIR" -maxdepth 1 -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.webp" \) -print0 2>/dev/null | shuf -z)
 
   local count=${#DECK[@]}
   if (( count == 0 )); then
@@ -115,6 +120,9 @@ on_usr1() {
 }
 
 cleanup() {
+  if [[ -n "${SLEEP_PID:-}" ]]; then
+    kill "$SLEEP_PID" 2>/dev/null || true
+  fi
   exit 0
 }
 

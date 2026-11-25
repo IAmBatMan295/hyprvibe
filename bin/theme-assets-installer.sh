@@ -17,8 +17,12 @@ source "$COMMON_LIB"
 
 USER_HOME="$(resolve_user_home)"
 ICONS_DIR="${USER_HOME}/.local/share/icons"
-YAMIS_DIR_USER="${ICONS_DIR}/YAMIS"
-YAMIS_DIR_SYSTEM="/usr/share/icons/YAMIS"
+YAMIS_DIR_USER="${YAMIS_DIR_USER:-${ICONS_DIR}/YAMIS}"
+YAMIS_DIR_SYSTEM="${YAMIS_DIR_SYSTEM:-/usr/share/icons/YAMIS}"
+SDDM_SYS_THEME_DIR="${SDDM_SYS_THEME_DIR:-/usr/share/sddm/themes/hyprvibe}"
+SDDM_SYS_HYPRLAND_LUA="${SDDM_SYS_HYPRLAND_LUA:-/usr/share/sddm/hyprland.lua}"
+ETC_SDDM_CONF_DIR="${ETC_SDDM_CONF_DIR:-/etc/sddm.conf.d}"
+SDDM_LEGACY_CLOCKWORK_DIR="${SDDM_LEGACY_CLOCKWORK_DIR:-/usr/share/sddm/themes/clockwork}"
 
 yamis_installed() {
     [[ -f "${YAMIS_DIR_USER}/index.theme" || -f "${YAMIS_DIR_SYSTEM}/index.theme" ]]
@@ -200,64 +204,83 @@ fontSize=13
 EOF
     fi
 
-    log_info "Installing HyprVibe SDDM theme to /usr/share/sddm/themes/hyprvibe..."
-    sudo mkdir -p /usr/share/sddm/themes/hyprvibe
-    sudo cp -a "${source_theme_dir}/." "/usr/share/sddm/themes/hyprvibe/"
+    log_info "Installing HyprVibe SDDM theme to ${SDDM_SYS_THEME_DIR}..."
+    sudo mkdir -p "$SDDM_SYS_THEME_DIR"
+    sudo cp -a "${source_theme_dir}/." "${SDDM_SYS_THEME_DIR}/"
 
     # Ensure assets directory and seed default wallpaper exist
-    sudo mkdir -p /usr/share/sddm/themes/hyprvibe/assets
-    if [[ ! -f "/usr/share/sddm/themes/hyprvibe/assets/default-bg.jpg" ]]; then
+    sudo mkdir -p "${SDDM_SYS_THEME_DIR}/assets"
+    if ! compgen -G "${SDDM_SYS_THEME_DIR}/assets/default-bg.*" >/dev/null 2>&1; then
         local seed_bg=""
         shopt -s nullglob
         local seed_bgs=("${ROOT_DIR}/themes/catppuccin/backgrounds"/*.{jpg,jpeg,png,webp})
         shopt -u nullglob
         if (( ${#seed_bgs[@]} > 0 )); then
             seed_bg="${seed_bgs[0]}"
-            sudo cp -f "$seed_bg" "/usr/share/sddm/themes/hyprvibe/assets/default-bg.jpg"
+            sudo cp -f "$seed_bg" "${SDDM_SYS_THEME_DIR}/assets/default-bg.jpg"
         fi
     fi
 
-    # Enable user write permissions so hyprvibe-theme can dynamically sync wallpaper and colors
-    local target_user="${SUDO_USER:-$USER}"
+    # Keep SDDM greeter QML code root-owned (644 files / 755 dirs) so compromised user processes
+    # cannot inject password-capturing UI into the root-run greeter; only theme.conf and assets/ stay user-writable
+    # for dynamic hyprvibe-theme color and wallpaper sync.
+    local target_user="${SUDO_USER:-${USER:-$(id -un)}}"
     local target_group
     target_group="$(id -gn "$target_user" 2>/dev/null || echo "$target_user")"
-    sudo chown -R "${target_user}:${target_group}" /usr/share/sddm/themes/hyprvibe 2>/dev/null || true
-    sudo chmod -R 775 /usr/share/sddm/themes/hyprvibe 2>/dev/null || true
 
-    # Generate adaptive hardware scaling for SDDM Wayland greeter compositor
-    if [[ -f "${ROOT_DIR}/bin/lib/hardware-detect.sh" ]]; then
-        source "${ROOT_DIR}/bin/lib/hardware-detect.sh"
-        sync_sddm_compositor_config "${ROOT_DIR}"
+    sudo chown -R root:root "$SDDM_SYS_THEME_DIR"
+    sudo find "$SDDM_SYS_THEME_DIR" -type d -exec chmod 755 {} +
+    sudo find "$SDDM_SYS_THEME_DIR" -type f -exec chmod 644 {} +
+
+    sudo mkdir -p "${SDDM_SYS_THEME_DIR}/assets"
+    sudo chown -R "${target_user}:${target_group}" "${SDDM_SYS_THEME_DIR}/assets"
+    sudo chmod 755 "${SDDM_SYS_THEME_DIR}/assets"
+    sudo find "${SDDM_SYS_THEME_DIR}/assets" -type f -exec chmod 644 {} +
+
+    if [[ -f "${SDDM_SYS_THEME_DIR}/theme.conf" ]]; then
+        sudo chown "${target_user}:${target_group}" "${SDDM_SYS_THEME_DIR}/theme.conf"
+        sudo chmod 644 "${SDDM_SYS_THEME_DIR}/theme.conf"
     fi
 
-    # Install Wayland greeter compositor config
-    if [[ -f "${sddm_dir}/hyprland.lua" ]]; then
-        log_info "Installing SDDM Wayland compositor config to /usr/share/sddm/hyprland.lua..."
-        sudo cp -f "${sddm_dir}/hyprland.lua" "/usr/share/sddm/hyprland.lua"
+    # Generate adaptive hardware scaling for SDDM Wayland greeter compositor directly from template
+    if [[ -f "${ROOT_DIR}/bin/lib/hardware-detect.sh" ]]; then
+        local tmp_sddm_lua
+        tmp_sddm_lua="$(mktemp "${TMPDIR:-/tmp}/hyprvibe-sddm-hypr.XXXXXX")"
+        # shellcheck disable=SC1091
+        source "${ROOT_DIR}/bin/lib/hardware-detect.sh"
+        sync_sddm_compositor_config "${ROOT_DIR}" "$tmp_sddm_lua"
+        if [[ -s "$tmp_sddm_lua" ]]; then
+            log_info "Installing SDDM Wayland compositor config to ${SDDM_SYS_HYPRLAND_LUA}..."
+            sudo mkdir -p "$(dirname -- "$SDDM_SYS_HYPRLAND_LUA")"
+            sudo install -m 644 "$tmp_sddm_lua" "$SDDM_SYS_HYPRLAND_LUA"
+        fi
+        rm -f "$tmp_sddm_lua"
     fi
 
     # Install SDDM configuration drops
     log_info "Configuring SDDM for Wayland and HyprVibe theme..."
-    sudo mkdir -p /etc/sddm.conf.d
+    sudo mkdir -p "$ETC_SDDM_CONF_DIR"
 
     if [[ -f "${sddm_dir}/10-wayland.conf" ]]; then
-        sudo cp -f "${sddm_dir}/10-wayland.conf" "/etc/sddm.conf.d/10-wayland.conf"
+        sudo cp -f "${sddm_dir}/10-wayland.conf" "${ETC_SDDM_CONF_DIR}/10-wayland.conf"
+        sudo chmod 644 "${ETC_SDDM_CONF_DIR}/10-wayland.conf"
     fi
 
     if [[ -f "${sddm_dir}/10-theme.conf" ]]; then
-        sudo cp -f "${sddm_dir}/10-theme.conf" "/etc/sddm.conf.d/10-theme.conf"
+        sudo cp -f "${sddm_dir}/10-theme.conf" "${ETC_SDDM_CONF_DIR}/10-theme.conf"
+        sudo chmod 644 "${ETC_SDDM_CONF_DIR}/10-theme.conf"
     fi
 
     # Clean up legacy theme configurations and files
-    sudo rm -f /etc/sddm.conf.d/clockwork.conf /etc/sddm.conf.d/theme.conf 2>/dev/null || true
-    sudo rm -rf /usr/share/sddm/themes/clockwork 2>/dev/null || true
+    sudo rm -f "${ETC_SDDM_CONF_DIR}/clockwork.conf" "${ETC_SDDM_CONF_DIR}/theme.conf" 2>/dev/null || true
+    sudo rm -rf "$SDDM_LEGACY_CLOCKWORK_DIR" 2>/dev/null || true
 
     log_success "HyprVibe SDDM theme installed and activated."
     return 0
 }
 
 verify_hyprvibe_sddm() {
-    [[ -d "/usr/share/sddm/themes/hyprvibe" && -f "/usr/share/sddm/themes/hyprvibe/assets/default-bg.jpg" && -f "/etc/sddm.conf.d/10-theme.conf" ]]
+    [[ -d "$SDDM_SYS_THEME_DIR" && -f "${ETC_SDDM_CONF_DIR}/10-theme.conf" ]] && compgen -G "${SDDM_SYS_THEME_DIR}/assets/default-bg.*" >/dev/null 2>&1
 }
 
 main() {
@@ -269,4 +292,6 @@ main() {
     log_success "Theme assets installation completed successfully."
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

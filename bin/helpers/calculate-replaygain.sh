@@ -10,50 +10,12 @@ HELPER_TITLE="Calculate ReplayGain"
 HELPER_ICON="󰎈"
 HELPER_ORDER=40
 
-# ------------------------------------------------------------------------------
-# Floating Window Spawn Logic (40% screen width x 40% height, centered)
-# ------------------------------------------------------------------------------
-IS_INNER=false
-for a in "$@"; do
-    [[ "$a" == "--inner" || "$a" == "--headless" ]] && IS_INNER=true
-done
+REAL_SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
+ROOT_DIR="$(cd -- "$(dirname -- "${REAL_SCRIPT}")/../.." && pwd)"
+# shellcheck source=../lib/helper-ui.sh
+source "${ROOT_DIR}/bin/lib/helper-ui.sh"
 
-if [[ "$IS_INNER" == "false" ]]; then
-    SCRIPT_FILE=$(readlink -f "$0")
-
-    MON_INFO=$(hyprctl monitors -j 2>/dev/null || true)
-    WIDTH=$(echo "$MON_INFO" | jq -r '.[] | select(.focused == true) | .width // empty' 2>/dev/null || true)
-    if [[ -z "$WIDTH" ]]; then
-        WIDTH=$(echo "$MON_INFO" | jq -r '.[0].width // 1920' 2>/dev/null || true)
-        HEIGHT=$(echo "$MON_INFO" | jq -r '.[0].height // 1080' 2>/dev/null || true)
-        SCALE=$(echo "$MON_INFO" | jq -r '.[0].scale // 1.0' 2>/dev/null || true)
-    else
-        HEIGHT=$(echo "$MON_INFO" | jq -r '.[] | select(.focused == true) | .height // 1080' 2>/dev/null || true)
-        SCALE=$(echo "$MON_INFO" | jq -r '.[] | select(.focused == true) | .scale // 1.0' 2>/dev/null || true)
-    fi
-
-    TARGET_W=$(awk -v w="$WIDTH" -v s="$SCALE" 'BEGIN { printf "%d", (w / s) * 0.40 }')
-    TARGET_H=$(awk -v h="$HEIGHT" -v s="$SCALE" 'BEGIN { printf "%d", (h / s) * 0.40 }')
-    [[ "$TARGET_W" -lt 600 ]] && TARGET_W=600
-    [[ "$TARGET_H" -lt 380 ]] && TARGET_H=380
-
-    if command -v hyprctl >/dev/null 2>&1 && pgrep -x Hyprland >/dev/null 2>&1; then
-        hyprctl eval "hl.window_rule({ match = { class = 'calculate-replaygain' }, float = true, center = true, size = '${TARGET_W} ${TARGET_H}' })" >/dev/null 2>&1 || true
-        hyprctl eval "hl.exec_cmd('foot -a calculate-replaygain -T \"${HELPER_TITLE}\" -w ${TARGET_W}x${TARGET_H} bash \"${SCRIPT_FILE}\" --inner \"$@\"')" >/dev/null 2>&1 || true
-        exit 0
-    fi
-fi
-
-# ------------------------------------------------------------------------------
-# Dependency Verification
-# ------------------------------------------------------------------------------
-if ! command -v rsgain >/dev/null 2>&1; then
-    echo "  ❌ Error: 'rsgain' is not installed or not in PATH." >&2
-    if command -v notify-send >/dev/null 2>&1; then
-        notify-send "${HELPER_TITLE}" "Error: rsgain is not installed" -u critical
-    fi
-    exit 1
-fi
+helper_maybe_spawn_window "$0" 0.40 0.40 600 380 "--inner --headless --dry-run" "$@"
 
 DEFAULT_DIR="${HOME}/Music/music"
 [[ ! -d "$DEFAULT_DIR" ]] && DEFAULT_DIR="${HOME}/Music"
@@ -69,14 +31,17 @@ TARGET_DIR=""
 
 for arg in "$@"; do
     case "$arg" in
-        --headless) HEADLESS=true ;;
+        --headless)
+            HEADLESS=true
+            HELPER_HEADLESS=true
+            ;;
         --dry-run) DRY_RUN=true ;;
         --skip) PRESET_SKIP="y" ;;
         --no-skip) PRESET_SKIP="n" ;;
         --dir=*) TARGET_DIR="${arg#*=}" ;;
         --inner) ;;
         *)
-            if [[ -d "$arg" && -z "$TARGET_DIR" ]]; then
+            if [[ -z "$TARGET_DIR" ]]; then
                 TARGET_DIR="$arg"
             fi
             ;;
@@ -84,13 +49,15 @@ for arg in "$@"; do
 done
 
 # ------------------------------------------------------------------------------
-# Title Display (Clean left-aligned text, no wrapping, matching helpers standard)
+# Dependency Verification
 # ------------------------------------------------------------------------------
-print_title() {
-    echo ""
-    echo "  ${HELPER_ICON}  ${HELPER_TITLE}"
-    echo ""
-}
+if ! command -v rsgain >/dev/null 2>&1; then
+    if [[ "$HEADLESS" != "true" ]]; then
+        clear 2>/dev/null || true
+        helper_print_title
+    fi
+    helper_fail "'rsgain' is not installed or not in PATH."
+fi
 
 # ------------------------------------------------------------------------------
 # Non-Interactive / Headless / Dry-Run Mode
@@ -98,6 +65,10 @@ print_title() {
 if [[ "$HEADLESS" == "true" ]]; then
     if [[ -z "$TARGET_DIR" ]]; then
         TARGET_DIR="$DEFAULT_DIR"
+    fi
+    TARGET_DIR="${TARGET_DIR/#\~/$HOME}"
+    if [[ ! -d "$TARGET_DIR" ]]; then
+        helper_fail "Directory not found: $TARGET_DIR"
     fi
 
     SKIP_ARGS=()
@@ -111,18 +82,19 @@ if [[ "$HEADLESS" == "true" ]]; then
         exit 0
     fi
 
-    "${CMD[@]}"
-    if command -v notify-send >/dev/null 2>&1; then
-        notify-send "${HELPER_TITLE}" "ReplayGain tags applied to $(basename "$TARGET_DIR")" -i audio-volume-high
+    if ! "${CMD[@]}"; then
+        helper_fail "rsgain exited with an error."
     fi
+    helper_notify normal "ReplayGain tags applied to $(basename "$TARGET_DIR")"
     exit 0
 fi
 
 # ------------------------------------------------------------------------------
 # Interactive Execution
 # ------------------------------------------------------------------------------
-clear
-print_title
+clear 2>/dev/null || true
+helper_print_title
+helper_enable_error_pause
 
 echo "  Skip files with existing ReplayGain metadata?"
 echo ""
@@ -131,6 +103,7 @@ read -r -p "  Proceed? [Y/n]: " choice
 if [[ "$choice" =~ ^[qQ]$ ]]; then
     echo ""
     echo "  Exiting."
+    helper_wait_for_q "  Press 'q' to close..."
     exit 0
 fi
 
@@ -162,6 +135,7 @@ if [[ -z "$TARGET_DIR" ]]; then
         if command -v zenity >/dev/null 2>&1; then
             echo ""
             echo "  No directory selected. Cancelled."
+            helper_wait_for_q "  Press 'q' to close..."
             exit 0
         else
             echo ""
@@ -171,13 +145,9 @@ if [[ -z "$TARGET_DIR" ]]; then
     fi
 fi
 
+TARGET_DIR="${TARGET_DIR/#\~/$HOME}"
 if [[ ! -d "$TARGET_DIR" ]]; then
-    echo ""
-    echo "  ❌ Error: Directory not found: $TARGET_DIR" >&2
-    if command -v notify-send >/dev/null 2>&1; then
-        notify-send "${HELPER_TITLE}" "Error: Directory not found" -u critical
-    fi
-    exit 1
+    helper_fail "Directory not found: $TARGET_DIR"
 fi
 
 echo ""
@@ -187,13 +157,12 @@ echo ""
 echo "  Running rsgain..."
 echo ""
 
-rsgain easy -m MAX -p no_album "${SKIP_ARGS[@]}" "$TARGET_DIR"
-
-if command -v notify-send >/dev/null 2>&1; then
-    notify-send "${HELPER_TITLE}" "ReplayGain tags applied to $(basename "$TARGET_DIR")" -i audio-volume-high
+if ! rsgain easy -m MAX -p no_album "${SKIP_ARGS[@]}" "$TARGET_DIR"; then
+    helper_fail "rsgain failed while processing $TARGET_DIR"
 fi
+
+helper_notify normal "ReplayGain tags applied to $(basename "$TARGET_DIR")"
 
 echo ""
 echo "  ✅ ReplayGain tags processed successfully."
-echo ""
-read -r -p "  Press Enter to exit..." _
+helper_wait_for_q "  Press 'q' to close..."

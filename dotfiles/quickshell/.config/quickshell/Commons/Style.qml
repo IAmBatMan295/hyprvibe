@@ -386,7 +386,7 @@ QtObject {
     var barOut = {}
     var styleOut = {}
     var spacingOut = {}
-    var nextBase = 12
+    var nextBase = 14
     var nextSpacingScale = 1.0
     var nextSpacingScaleWithFont = true
     var nextBarScaleWithFont = true

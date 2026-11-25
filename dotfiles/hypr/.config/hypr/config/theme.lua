@@ -104,9 +104,9 @@ if not f then
 
 	for _, bin in ipairs(candidates) do
 		if bin and bin ~= "" then
-			local check = (bin:sub(1, 1) == "/" and ("test -x " .. bin) or ("command -v " .. bin .. " >/dev/null 2>&1"))
+			local check = (bin:sub(1, 1) == "/" and string.format("test -x %q", bin) or string.format("command -v %q >/dev/null 2>&1", bin))
 			if run_ok(check) then
-				run_ok(bin .. " set monochrome >/dev/null 2>&1")
+				run_ok(string.format("%q set monochrome >/dev/null 2>&1", bin))
 				break
 			end
 		end

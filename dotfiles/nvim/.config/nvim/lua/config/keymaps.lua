@@ -35,6 +35,12 @@ end, { desc = "Switch to Forest Green theme" })
 
 local _term_root = nil
 
+vim.api.nvim_create_autocmd("DirChanged", {
+  callback = function()
+    _term_root = nil
+  end,
+})
+
 local function toggle_terminal()
   if vim.bo.filetype ~= "snacks_terminal" then
     _term_root = LazyVim.root()

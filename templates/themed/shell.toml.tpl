@@ -75,20 +75,6 @@ border           = "{{ accent }}"
 border-alpha     = 1.0
 countdown        = "{{ accent }}"
 
-[launcher]
-background                = "{{ background }}"
-background-alpha          = 0.95
-text                      = "{{ foreground }}"
-border                    = "{{ foreground }}"
-border-alpha              = 1.0
-scrim                     = "{{ background }}"
-scrim-alpha               = 0.5
-selected-background       = "{{ foreground }}"
-selected-background-alpha = 0.08
-selected-text             = "{{ accent }}"
-selected-border           = "{{ foreground }}"
-selected-border-alpha     = 0.25
-
 [menu]
 background                = "{{ background }}"
 background-alpha          = 1.0
@@ -127,12 +113,3 @@ border-error     = "{{ red }}"
 border-alpha     = 1.0
 selection        = "{{ accent }}"
 selection-alpha  = 0.45
-
-[image-picker]
-scrim                   = "{{ background }}"
-scrim-alpha             = 0.5
-text                    = "{{ foreground }}"
-selected-border         = "{{ accent }}"
-selected-border-alpha   = 1.0
-unselected-border       = "{{ foreground }}"
-unselected-border-alpha = 0.28

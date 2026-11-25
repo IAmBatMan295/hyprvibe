@@ -47,14 +47,12 @@
             "<":       PreviousTrack,
             "f":       SeekForward,
             "z":       ToggleRepeat,
-            "x": 
-            ToggleRandom,
+            "x":       ToggleRandom,
             "c":       ToggleConsume,
             "v":       ToggleSingle,
             "b":       SeekBack,
             "~":       ShowHelp,
-            "u":      
-            Update,
+            "u":       Update,
             "U":       Rescan,
             "I":       ShowCurrentSongInfo,
             "O":       ShowOutputs,
@@ -99,8 +97,7 @@
             "D":       DeleteAll,
             "<CR>":    Play,
             "<C-s>":   Save,
-            "a":    
-            AddToPlaylist,
+            "a":       AddToPlaylist,
             "d":       Delete,
             "C":       JumpToCurrent,
             "X":       Shuffle,
@@ -114,8 +111,7 @@
             (value: "artist",      label: "Artist"),
             (value: "album",       label: "Album"),
             (value: "albumartist", label: "Album Artist"),
-            (value: "title",  
-            label: "Title"),
+            (value: "title",       label: "Title"),
             (value: "filename",    label: "Filename"),
             (value: "genre",       label: "Genre"),
         ],
@@ -207,4 +203,3 @@
         ),
     ],
     )
-}

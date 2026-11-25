@@ -11,6 +11,11 @@ if [[ -r "$COMMON_LIB" ]]; then
     source "$COMMON_LIB"
 else
     resolve_user_home() {
+        if [[ -n "${USER_HOME:-}" ]]; then
+            printf '%s\n' "${USER_HOME}"
+            return 0
+        fi
+
         local resolved_home
         resolved_home="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6 || true)"
 
@@ -19,6 +24,33 @@ else
         else
             printf '%s\n' "${HOME}"
         fi
+    }
+
+    log_step() {
+        local current="$1"
+        local total="$2"
+        local label="$3"
+        printf '\n%b[%s/%s]%b %b%s%b\n' "${COLOR_CYAN:-}" "$current" "$total" "${COLOR_RESET:-}" "${COLOR_BOLD:-}" "$label" "${COLOR_RESET:-}"
+    }
+
+    print_tui_box() {
+        local title="$1"
+        shift
+        local width=66
+        local border
+        printf -v border '%*s' "$width" ''
+        border="${border// /─}"
+
+        printf '\n%b┌%s┐%b\n' "${COLOR_BLUE:-}" "$border" "${COLOR_RESET:-}"
+        printf '%b│%b %-*.*s %b│%b\n' "${COLOR_BLUE:-}" "${COLOR_BOLD:-}${COLOR_CYAN:-}" $((width - 2)) $((width - 2)) "$title" "${COLOR_BLUE:-}" "${COLOR_RESET:-}"
+        if (( $# > 0 )); then
+            printf '%b├%s┤%b\n' "${COLOR_BLUE:-}" "$border" "${COLOR_RESET:-}"
+            local line
+            for line in "$@"; do
+                printf '%b│%b %-*.*s %b│%b\n' "${COLOR_BLUE:-}" "${COLOR_RESET:-}" $((width - 2)) $((width - 2)) "$line" "${COLOR_BLUE:-}" "${COLOR_RESET:-}"
+            done
+        fi
+        printf '%b└%s┘%b\n' "${COLOR_BLUE:-}" "$border" "${COLOR_RESET:-}"
     }
 
     COLOR_RESET=""
@@ -142,8 +174,9 @@ cleanup_clone_temp() {
 }
 
 ensure_cachyos() {
-    if [[ ! -f /etc/os-release ]]; then
-        log_error "/etc/os-release not found. HyprVibe requires CachyOS."
+    local os_release_file="${OS_RELEASE_FILE:-/etc/os-release}"
+    if [[ ! -f "$os_release_file" ]]; then
+        log_error "${os_release_file} not found. HyprVibe requires CachyOS."
         exit 1
     fi
 
@@ -151,15 +184,59 @@ ensure_cachyos() {
     local os_id_like=""
     local os_pretty_name=""
 
-    os_id="$(grep -E '^ID=' /etc/os-release | cut -d= -f2 | tr -d '"' || true)"
-    os_id_like="$(grep -E '^ID_LIKE=' /etc/os-release | cut -d= -f2 | tr -d '"' || true)"
-    os_pretty_name="$(grep -E '^PRETTY_NAME=' /etc/os-release | cut -d= -f2 | tr -d '"' || true)"
+    os_id="$(grep -E '^ID=' "$os_release_file" | cut -d= -f2 | tr -d '"' || true)"
+    os_id_like="$(grep -E '^ID_LIKE=' "$os_release_file" | cut -d= -f2 | tr -d '"' || true)"
+    os_pretty_name="$(grep -E '^PRETTY_NAME=' "$os_release_file" | cut -d= -f2 | tr -d '"' || true)"
 
     if [[ "$os_id" != "cachyos" && "$os_id_like" != *"cachyos"* ]]; then
         log_error "Unsupported distribution: ${os_pretty_name:-Linux}."
         log_error "HyprVibe is strictly built and configured for CachyOS."
         exit 1
     fi
+}
+
+detect_invoked_repo_root() {
+    local src="$SCRIPT_SOURCE"
+    if [[ -z "$src" || "$src" == "bash" || "$src" == "-bash" || "$src" == "sh" || "$src" == "/dev/fd/"* || ! -e "$src" ]]; then
+        return 1
+    fi
+
+    local src_dir
+    src_dir="$(cd -- "$(dirname -- "$src")" 2>/dev/null && pwd -P)" || return 1
+
+    if command -v git >/dev/null 2>&1; then
+        local git_top=""
+        if git_top="$(git -C "$src_dir" rev-parse --show-toplevel 2>/dev/null)"; then
+            realpath -m "$git_top"
+            return 0
+        fi
+    fi
+
+    local candidate
+    candidate="$(realpath -m "${src_dir}/..")"
+    if [[ -d "${candidate}/dotfiles" && -d "${candidate}/themes" && -f "${candidate}/bin/install.sh" ]]; then
+        printf '%s\n' "$candidate"
+        return 0
+    fi
+
+    return 1
+}
+
+enforce_repo_location() {
+    local resolved_target
+    resolved_target="$(realpath -m "$HYPRVIBE_TARGET_DIR")"
+
+    local invoked_root=""
+    if invoked_root="$(detect_invoked_repo_root)"; then
+        if [[ "$invoked_root" != "$resolved_target" ]]; then
+            log_error "HyprVibe must be installed from ${resolved_target} (currently running from ${invoked_root})."
+            log_info "Move your repository to ${resolved_target} and re-run:"
+            printf '  mv "%s" "%s" && bash "%s/bin/install.sh"\n' "$invoked_root" "$resolved_target" "$resolved_target" >&2
+            return 1
+        fi
+    fi
+
+    return 0
 }
 
 validate_target_dir() {
@@ -339,7 +416,176 @@ manage_optional_plugins() {
     esac
 }
 
+HYPRVIBE_AUTO_YES="false"
+STEP_COMPLETED=()
+STEP_WARNINGS=()
+STEP_SKIPPED=()
+
+print_installer_banner() {
+    print_tui_box "HyprVibe OS Installer - CachyOS + Hyprland" \
+        "Target Repo : ${HYPRVIBE_TARGET_DIR}" \
+        "Install Log : ${INSTALL_LOG_FILE}"
+}
+
+detect_summary_field_chassis() {
+    local bat
+    shopt -s nullglob
+    local supplies=(/sys/class/power_supply/BAT* /sys/class/power_supply/CMB*)
+    shopt -u nullglob
+    for bat in "${supplies[@]}"; do
+        [[ -d "$bat" ]] && { printf 'Laptop (battery detected)'; return 0; }
+    done
+    printf 'Desktop / AC-only'
+}
+
+detect_summary_field_bootloader() {
+    if [[ -f /etc/default/limine || -f /boot/limine.conf || -f /boot/limine/limine.conf ]] || command -v limine-update >/dev/null 2>&1; then
+        printf 'Limine'
+    elif [[ -d /boot/loader/entries ]] || command -v bootctl >/dev/null 2>&1; then
+        printf 'systemd-boot'
+    elif [[ -f /etc/default/grub ]]; then
+        printf 'GRUB'
+    else
+        printf 'Unknown'
+    fi
+}
+
+print_preflight_summary() {
+    local os_release_file="${OS_RELEASE_FILE:-/etc/os-release}"
+    local os_name="CachyOS"
+    if [[ -r "$os_release_file" ]]; then
+        os_name="$(grep -E '^PRETTY_NAME=' "$os_release_file" | cut -d= -f2 | tr -d '"' || echo "CachyOS")"
+    fi
+
+    local cpu_vendor="unknown"
+    if command -v lscpu >/dev/null 2>&1; then
+        cpu_vendor="$(lscpu 2>/dev/null | awk -F: '/Vendor ID/{gsub(/^[ \t]+/,"",$2); print $2; exit}' || echo "unknown")"
+    fi
+
+    local gpu_line="auto-detected"
+    if command -v lspci >/dev/null 2>&1; then
+        gpu_line="$(lspci 2>/dev/null | awk -F': ' '/VGA|3D|Display/{print $2}' | paste -sd ', ' - || echo "auto-detected")"
+        [[ -z "$gpu_line" ]] && gpu_line="auto-detected"
+    fi
+
+    local chassis_str
+    chassis_str="$(detect_summary_field_chassis)"
+    local bootloader_str
+    bootloader_str="$(detect_summary_field_bootloader)"
+    local run_mode="Interactive"
+    [[ "$HYPRVIBE_AUTO_YES" == "true" ]] && run_mode="Non-interactive (--yes)"
+
+    print_tui_box "Pre-Flight System Summary" \
+        "OS         : ${os_name}" \
+        "CPU Vendor : ${cpu_vendor}" \
+        "GPU(s)     : ${gpu_line}" \
+        "Chassis    : ${chassis_str}" \
+        "Bootloader : ${bootloader_str}" \
+        "User Home  : ${USER_HOME}" \
+        "Mode       : ${run_mode}"
+}
+
+confirm_installation_preflight() {
+    if [[ "$HYPRVIBE_AUTO_YES" == "true" ]]; then
+        log_info "Auto-confirm enabled (--yes). Starting installation..."
+        return 0
+    fi
+
+    local answer=""
+    if ! read_from_tty "Proceed with HyprVibe installation? [Y/n]: " answer; then
+        log_error "Interactive input unavailable for confirmation."
+        return 1
+    fi
+
+    case "${answer,,}" in
+        ""|y|yes)
+            return 0
+            ;;
+        *)
+            log_info "Installation cancelled by user before changes were applied."
+            return 1
+            ;;
+    esac
+}
+
+print_install_summary() {
+    local elapsed="${1:-0}"
+    local mins=$((elapsed / 60))
+    local secs=$((elapsed % 60))
+    local duration
+    printf -v duration '%02dm %02ds' "$mins" "$secs"
+
+    local lines=(
+        "Duration  : ${duration}"
+        "Completed : ${#STEP_COMPLETED[@]} step(s)"
+        "Warnings  : ${#STEP_WARNINGS[@]}"
+        "Skipped   : ${#STEP_SKIPPED[@]}"
+        "Log File  : ${INSTALL_LOG_FILE}"
+        "Verify    : ${HYPRVIBE_TARGET_DIR}/bin/hyprvibe-doctor"
+    )
+
+    local item
+    for item in ${STEP_WARNINGS[@]+"${STEP_WARNINGS[@]}"}; do
+        lines+=("  [WARN] ${item}")
+    done
+    for item in ${STEP_SKIPPED[@]+"${STEP_SKIPPED[@]}"}; do
+        lines+=("  [SKIP] ${item}")
+    done
+
+    print_tui_box "HyprVibe Installation Summary" "${lines[@]}"
+}
+
+prompt_reboot_if_requested() {
+    if [[ "$HYPRVIBE_AUTO_YES" == "true" ]]; then
+        log_info "Skipping automatic reboot under --yes. Reboot manually before logging into HyprVibe."
+        return 0
+    fi
+
+    local answer=""
+    if ! read_from_tty "Reboot now to enter SDDM / Hyprland cleanly? [y/N]: " answer; then
+        return 0
+    fi
+
+    case "${answer,,}" in
+        y|yes)
+            log_info "Rebooting system..."
+            sudo systemctl reboot
+            ;;
+        *)
+            log_info "Remember to reboot before starting your first HyprVibe session."
+            ;;
+    esac
+}
+
+print_usage() {
+    cat <<'EOF'
+Usage: install.sh [OPTIONS]
+
+Options:
+  -y, --yes    Skip pre-flight confirmation and reboot prompts
+  -h, --help   Show this help message and exit
+EOF
+}
+
 main() {
+    local pos_args=()
+    while (( $# > 0 )); do
+        case "$1" in
+            -y|--yes)
+                HYPRVIBE_AUTO_YES="true"
+                ;;
+            -h|--help)
+                print_usage
+                return 0
+                ;;
+            *)
+                pos_args+=("$1")
+                ;;
+        esac
+        shift
+    done
+    export HYPRVIBE_AUTO_YES
+
     setup_colors
     ensure_terminal_environment
 
@@ -348,40 +594,76 @@ main() {
         exit 1
     fi
 
+    enforce_repo_location || exit 1
     ensure_cachyos
     setup_run_logging
+    print_installer_banner
 
-    refresh_hyprvibe_clone "$@"
+    refresh_hyprvibe_clone ${pos_args[@]+"${pos_args[@]}"}
+    print_preflight_summary
 
     require_interactive_tty || exit 1
+    confirm_installation_preflight || exit 0
 
     trap stop_sudo_keepalive EXIT
     start_sudo_keepalive || exit 1
 
-    run_module "github-auth.sh" || exit 1
-    run_module "install-packages.sh" || exit 1
-    run_module "theme-assets-installer.sh" || exit 1
+    SECONDS=0
+    local total_steps=7
 
+    log_step 1 "$total_steps" "GitHub SSH Setup"
+    run_module "github-auth.sh" || exit 1
+    STEP_COMPLETED+=("github-auth.sh")
+
+    log_step 2 "$total_steps" "System & AUR Package Installation"
+    run_module "install-packages.sh" || exit 1
+    STEP_COMPLETED+=("install-packages.sh")
+
+    log_step 3 "$total_steps" "Themes, Icons & Hardened SDDM Setup"
+    run_module "theme-assets-installer.sh" || exit 1
+    STEP_COMPLETED+=("theme-assets-installer.sh")
+
+    log_step 4 "$total_steps" "Hardware Display & Scaling Detection"
     log_phase "Hardware Display & Scaling Detection"
     if [[ -f "${HYPRVIBE_TARGET_DIR}/bin/lib/hardware-detect.sh" ]]; then
+        # shellcheck disable=SC1091
         source "${HYPRVIBE_TARGET_DIR}/bin/lib/hardware-detect.sh"
         ensure_monitors_config "${HYPRVIBE_TARGET_DIR}"
         log_success "Monitor and display scaling configuration verified."
+        STEP_COMPLETED+=("hardware-detect.sh")
+    else
+        log_warn "hardware-detect.sh missing; skipped monitor auto-detection."
+        STEP_SKIPPED+=("hardware-detect.sh")
     fi
 
+    log_step 5 "$total_steps" "Stow Dotfiles"
     run_module "stow-dotfiles.sh" || exit 1
+    STEP_COMPLETED+=("stow-dotfiles.sh")
 
+    log_step 6 "$total_steps" "Default Theme & System Hardening"
     log_phase "Theme Engine Initialization"
     if [[ -x "${HYPRVIBE_TARGET_DIR}/bin/hyprvibe-theme" ]]; then
-        "${HYPRVIBE_TARGET_DIR}/bin/hyprvibe-theme" set monochrome || log_warn "Failed to set default monochrome theme."
+        if "${HYPRVIBE_TARGET_DIR}/bin/hyprvibe-theme" set monochrome; then
+            STEP_COMPLETED+=("hyprvibe-theme set monochrome")
+        else
+            log_warn "Failed to set default monochrome theme."
+            STEP_WARNINGS+=("hyprvibe-theme set monochrome")
+        fi
+    else
+        STEP_SKIPPED+=("hyprvibe-theme set monochrome")
     fi
 
     run_module "miscellaneous.sh" || exit 1
+    STEP_COMPLETED+=("miscellaneous.sh")
 
+    log_step 7 "$total_steps" "Optional Hardware Plugins"
     manage_optional_plugins
+    STEP_COMPLETED+=("optional-plugins")
 
-    log_phase "Installer Summary"
-    log_success "All install modules completed successfully."
+    print_install_summary "$SECONDS"
+    prompt_reboot_if_requested
 }
 
-main "$@"
+if [[ -z "${BASH_SOURCE[0]:-}" || "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

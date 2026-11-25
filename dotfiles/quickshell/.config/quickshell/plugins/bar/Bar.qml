@@ -573,7 +573,7 @@ Item {
   }
 
   function setBarPosition(value) {
-    root.position = "top"
+    root.position = normalizePosition(value)
   }
 
   function captureBarDragGhost(slot) {
@@ -631,7 +631,7 @@ Item {
   function applyBarConfig() {
     var config = Util.isPlainObject(barConfig) ? barConfig : fallbackBarConfig
 
-    position = "top"
+    position = normalizePosition(config.position)
     setRequestedTransparency(config.transparent === true)
     centerAnchor = Util.canonicalWidgetId(config.centerAnchor || "")
     root.autohide = (config.autohide === true)
@@ -863,8 +863,6 @@ Item {
     return source ? Util.fileUrl(source) : ""
   }
 
-  Component.onCompleted: applyBarConfig()
-
   function setBarHovered(hovered) {
     barHoverCount = Math.max(0, barHoverCount + (hovered ? 1 : -1))
   }
@@ -879,8 +877,12 @@ Item {
     Util.execDetached(command)
   }
 
+  readonly property color panelSurfaceColor: root.transparent
+    ? Util.alpha(root.background, 0.72)
+    : (root.background.a < 0.999 ? root.background : Util.alpha(root.background, 0.85))
+
   function toggleTransparency() {
-    // Transparency is permanently enabled with 0.8 alpha and Hyprland blur
+    setRequestedTransparency(!root.requestedTransparent)
   }
 
   function rawLayoutSection(config, region) {
@@ -1154,6 +1156,11 @@ Item {
     onFileChanged: barHiddenProbe.running = true
   }
 
+  Component.onCompleted: {
+    Quickshell.execDetached(["mkdir", "-p", root.home + "/.local/state/hyprvibe/toggles"])
+    applyBarConfig()
+  }
+
   // The directory watch can permanently stop delivering events after flag
   // changes land in quick succession, stranding the bar off screen until the
   // shell restarts. `hyprvibe-toggle-bar` nudges this after flipping the flag
@@ -1270,6 +1277,15 @@ Item {
       Behavior on top {
         NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
       }
+      Behavior on bottom {
+        NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
+      }
+      Behavior on left {
+        NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
+      }
+      Behavior on right {
+        NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
+      }
     }
 
     anchors {
@@ -1281,7 +1297,7 @@ Item {
 
     implicitWidth: root.vertical ? root.barSize : 0
     implicitHeight: root.vertical ? 0 : root.barSize
-    color: Util.alpha(root.background, 0.85)
+    color: root.panelSurfaceColor
     surfaceFormat.opaque: false
     WlrLayershell.namespace: "hyprvibe-bar"
     WlrLayershell.layer: WlrLayer.Top
@@ -1716,7 +1732,7 @@ Item {
       visible: slot.dragSource
       anchors.fill: parent
       anchors.margins: Style.space(1)
-      color: Util.alpha(root.background, 0.85)
+      color: root.panelSurfaceColor
       borderSpec: Border.flat(root.barForeground, 1)
       radius: Math.min(Style.cornerRadius, height / 2)
       opacity: root.transparent ? 0.22 : 0.32

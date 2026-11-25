@@ -23,11 +23,6 @@ button:active {
 /* Dynamic Theme Import */
 @import "../../.local/state/hyprvibe/current/gtk.css";
 
-/* Nemo file manager font */
-.nemo-window * {
-    font-family: "JetBrainsMono Nerd Font";
-}
-
 /* Force sharp corners globally */
 * {
     border-radius: 0px;

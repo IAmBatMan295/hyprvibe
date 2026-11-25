@@ -1,6 +1,18 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
-active=$(powerprofilesctl get)
+if ! command -v powerprofilesctl >/dev/null 2>&1; then
+  notify-send -u critical "Power Profile" "powerprofilesctl is not installed or unavailable" 2>/dev/null || true
+  exit 1
+fi
+
+if ! active=$(powerprofilesctl get 2>/dev/null) || [[ -z "$active" ]]; then
+  notify-send -u critical "Power Profile" "Failed to query active power profile" 2>/dev/null || true
+  exit 1
+fi
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+TOGGLE_REFRESH="${SCRIPT_DIR}/toggle-refresh.sh"
 
 c_active=""
 c_dim=""
@@ -35,41 +47,56 @@ rofi_cmd() {
 }
 
 run_rofi() {
-  echo -e "$PERF\n$BAL\n$SAVE" | rofi_cmd
+  printf '%s\n%s\n%s\n' "$PERF" "$BAL" "$SAVE" | rofi_cmd
 }
 
 run_cmd() {
   case $1 in
   --performance)
-    powerprofilesctl set performance
-    notify-send -t 3000 "Power Profile" "Set to  Performance Mode"
+    if ! powerprofilesctl set performance; then
+      notify-send -u critical "Power Profile" "Failed to switch to Performance Mode" 2>/dev/null || true
+      exit 1
+    fi
+    notify-send -t 3000 "Power Profile" "Set to  Performance Mode" 2>/dev/null || true
+
+    # One-shot restore to native max refresh + VRR; manual toggles afterward stay respected.
+    if [[ -x "$TOGGLE_REFRESH" ]] && command -v hyprctl >/dev/null 2>&1; then
+      local switched_info switched_out switched_rate
+      if switched_info=$("$TOGGLE_REFRESH" --high --quiet 2>/dev/null); then
+        IFS=$'\t' read -r switched_out switched_rate <<<"$switched_info"
+        if [[ -n "${switched_out:-}" && -n "${switched_rate:-}" ]]; then
+          notify-send -t 4000 "Performance Active" "Refresh rate restored to ${switched_rate}Hz VRR (${switched_out})" 2>/dev/null || true
+        fi
+      fi
+    fi
     ;;
   --balanced)
     powerprofilesctl set balanced
-    notify-send -t 3000 "Power Profile" "Set to   Balanced Mode"
+    notify-send -t 3000 "Power Profile" "Set to   Balanced Mode" 2>/dev/null || true
     ;;
   --power-saver)
     powerprofilesctl set power-saver
-    notify-send -t 3000 "Power Profile" "Set to 󰌪 Power Saver Mode"
-    
-    STATE=$(hyprctl getoption misc.vrr -j 2>/dev/null | grep '"int": 0' || true)
-    if [ -z "$STATE" ]; then
-        MON_INFO=$(hyprctl monitors -j 2>/dev/null || true)
-        read -r OUTPUT WIDTH HEIGHT SCALE < <(echo "$MON_INFO" | jq -r '.[0] | "\(.name // "") \(.width // "") \(.height // "") \(.scale // 1.0)"' 2>/dev/null || echo "")
+    notify-send -t 3000 "Power Profile" "Set to 󰌪 Power Saver Mode" 2>/dev/null || true
 
-        if [[ -n "$OUTPUT" && -n "$WIDTH" && -n "$HEIGHT" ]]; then
-            if hyprctl eval "hl.monitor({ output = \"${OUTPUT}\", mode = \"${WIDTH}x${HEIGHT}@60\", position = \"auto\", scale = ${SCALE}, bitdepth = 10 })" > /dev/null 2>&1 && hyprctl eval 'hl.config({ misc = { vrr = 0 } })' > /dev/null 2>&1; then
-                notify-send -t 4000 "Power Saver Active" "Refresh rate locked to 60Hz (${OUTPUT})"
-            else
-                notify-send -u critical "Power Saver Active" "Failed to lock refresh rate to 60Hz on ${OUTPUT}"
-            fi
+    if [[ -x "$TOGGLE_REFRESH" ]] && command -v hyprctl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+      local vrr_state switched_info switched_out switched_rate
+      vrr_state=$(hyprctl getoption misc.vrr -j 2>/dev/null | jq -r '.int // empty' 2>/dev/null || true)
+      if [[ "$vrr_state" != "0" ]]; then
+        if switched_info=$("$TOGGLE_REFRESH" --low --quiet 2>/dev/null); then
+          IFS=$'\t' read -r switched_out switched_rate <<<"$switched_info"
+          if [[ -n "${switched_out:-}" ]]; then
+            notify-send -t 4000 "Power Saver Active" "Refresh rate locked to 60Hz (${switched_out})" 2>/dev/null || true
+          fi
+        else
+          notify-send -u critical "Power Saver Active" "Failed to lock refresh rate to 60Hz" 2>/dev/null || true
         fi
+      fi
     fi
     ;;
   esac
 }
 
-chosen="$(run_rofi)"
+chosen="$(run_rofi || true)"
 
 case "$chosen" in
 	*"Performance"*)

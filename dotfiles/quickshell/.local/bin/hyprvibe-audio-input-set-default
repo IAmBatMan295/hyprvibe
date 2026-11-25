@@ -12,9 +12,9 @@ if [[ -z $node_id || -z $source_name ]]; then
   exit 1
 fi
 
-wpctl set-default "$node_id" 2>/dev/null || true
-pactl set-default-source "$source_name" 2>/dev/null || true
+timeout 2 wpctl set-default "$node_id" 2>/dev/null || true
+timeout 2 pactl set-default-source "$source_name" 2>/dev/null || true
 
-pactl list short source-outputs 2>/dev/null | awk '{ print $1 }' | while read -r output; do
-  [[ -n $output ]] && pactl move-source-output "$output" "$source_name" 2>/dev/null || true
+timeout 2 pactl list short source-outputs 2>/dev/null | awk '{ print $1 }' | while read -r output; do
+  [[ -n $output ]] && timeout 2 pactl move-source-output "$output" "$source_name" 2>/dev/null || true
 done

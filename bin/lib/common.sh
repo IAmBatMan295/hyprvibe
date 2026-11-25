@@ -11,6 +11,11 @@ COLOR_RED=""
 COLOR_CYAN=""
 
 resolve_user_home() {
+    if [[ -n "${USER_HOME:-}" ]]; then
+        printf '%s\n' "${USER_HOME}"
+        return 0
+    fi
+
     local resolved_home
     resolved_home="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6 || true)"
 
@@ -19,6 +24,33 @@ resolve_user_home() {
     else
         printf '%s\n' "${HOME}"
     fi
+}
+
+log_step() {
+    local current="$1"
+    local total="$2"
+    local label="$3"
+    printf '\n%b[%s/%s]%b %b%s%b\n' "${COLOR_CYAN:-}" "$current" "$total" "${COLOR_RESET:-}" "${COLOR_BOLD:-}" "$label" "${COLOR_RESET:-}"
+}
+
+print_tui_box() {
+    local title="$1"
+    shift
+    local width=66
+    local border
+    printf -v border '%*s' "$width" ''
+    border="${border// /─}"
+
+    printf '\n%b┌%s┐%b\n' "${COLOR_BLUE:-}" "$border" "${COLOR_RESET:-}"
+    printf '%b│%b %-*.*s %b│%b\n' "${COLOR_BLUE:-}" "${COLOR_BOLD:-}${COLOR_CYAN:-}" $((width - 2)) $((width - 2)) "$title" "${COLOR_BLUE:-}" "${COLOR_RESET:-}"
+    if (( $# > 0 )); then
+        printf '%b├%s┤%b\n' "${COLOR_BLUE:-}" "$border" "${COLOR_RESET:-}"
+        local line
+        for line in "$@"; do
+            printf '%b│%b %-*.*s %b│%b\n' "${COLOR_BLUE:-}" "${COLOR_RESET:-}" $((width - 2)) $((width - 2)) "$line" "${COLOR_BLUE:-}" "${COLOR_RESET:-}"
+        done
+    fi
+    printf '%b└%s┘%b\n' "${COLOR_BLUE:-}" "$border" "${COLOR_RESET:-}"
 }
 
 setup_colors() {

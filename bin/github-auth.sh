@@ -41,13 +41,16 @@ read_secret_from_tty() {
 	fi
 
 	printf "%s" "$prompt" >/dev/tty
+	trap 'stty echo </dev/tty 2>/dev/null || true; printf "\n" >/dev/tty 2>/dev/null || true' INT TERM
 	stty -echo </dev/tty
 	if ! IFS= read -r input </dev/tty; then
-		stty echo </dev/tty
-		printf "\n" >/dev/tty
+		stty echo </dev/tty 2>/dev/null || true
+		trap - INT TERM
+		printf "\n" >/dev/tty 2>/dev/null || true
 		return 1
 	fi
-	stty echo </dev/tty
+	stty echo </dev/tty 2>/dev/null || true
+	trap - INT TERM
 	printf "\n" >/dev/tty
 
 	printf -v "$out_var" '%s' "$input"
@@ -235,6 +238,8 @@ write_ssh_config() {
 		mv "$tmp_config" "$SSH_CONFIG"
 		chmod 600 "$SSH_CONFIG"
 		log_success "Replaced HyprVibe SSH block in ${SSH_CONFIG}."
+	elif grep -qiE '^[[:space:]]*Host[[:space:]]+([^#]*[[:space:]])?github\.com([[:space:]]|$)' "$SSH_CONFIG"; then
+		log_warn "Custom 'Host github.com' entry already exists in ${SSH_CONFIG}; leaving it untouched to preserve user SSH routing."
 	else
 		log_info "Appending HyprVibe SSH block to ${SSH_CONFIG}."
 		if [[ -s "$SSH_CONFIG" ]]; then
@@ -244,6 +249,18 @@ write_ssh_config() {
 		fi
 		chmod 600 "$SSH_CONFIG"
 		log_success "Added HyprVibe SSH block to ${SSH_CONFIG}."
+	fi
+}
+
+check_ssh_agent_status() {
+	if [[ -z "${SSH_AUTH_SOCK:-}" ]] || ! command -v ssh-add >/dev/null 2>&1; then
+		log_info "No active ssh-agent detected; passphrase will be requested on first git push/pull."
+		return 0
+	fi
+	if ssh-add -l >/dev/null 2>&1; then
+		log_success "SSH agent already has loaded identities."
+	else
+		log_info "SSH agent is running with no loaded keys; AddKeysToAgent will cache ${GITHUB_KEY} on first use."
 	fi
 }
 
@@ -281,6 +298,7 @@ main() {
 	ensure_ssh_dir
 	generate_key_if_missing "$GITHUB_KEY" "github" "GitHub" || exit 1
 	write_ssh_config
+	check_ssh_agent_status
 
 	local show_res=0
 	show_public_keys_if_requested || show_res=$?

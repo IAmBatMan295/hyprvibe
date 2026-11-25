@@ -1,4 +1,9 @@
-[colors-dark]
+[main]
+initial-color-theme={{ mode }}
+
+[colors-{{ mode }}]
+alpha=0.85
+blur=yes
 cursor={{ background_strip }} {{ foreground_strip }}
 foreground={{ foreground_strip }}
 background={{ background_strip }}

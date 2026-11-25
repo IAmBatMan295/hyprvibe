@@ -2,83 +2,89 @@
 # Hardware monitor and display scaling detection for HyprVibe
 # Generates hardware-adaptive monitor configurations at install time.
 
-detect_monitor_info() {
-    local mon_name=""
-    local width=1920
-    local height=1080
-    local refresh=60
-    local scale=1.0
-    local bitdepth=8
+DRM_SYSFS_DIR="${DRM_SYSFS_DIR:-/sys/class/drm}"
+SDDM_HYPRLAND_SYS="${SDDM_HYPRLAND_SYS:-/usr/share/sddm/hyprland.lua}"
 
-    # 1. Try hyprctl if active
+detect_all_monitors_info() {
+    # 1. Try hyprctl if active (returns all connected monitors)
     if command -v hyprctl >/dev/null 2>&1 && pgrep -x Hyprland >/dev/null 2>&1; then
         local mon_json
         mon_json="$(hyprctl monitors -j 2>/dev/null || true)"
         if [[ -n "$mon_json" && "$mon_json" != "[]" ]]; then
-            mon_name="$(echo "$mon_json" | jq -r '.[0].name // empty' 2>/dev/null || true)"
-            width="$(echo "$mon_json" | jq -r '.[0].width // 1920' 2>/dev/null || true)"
-            height="$(echo "$mon_json" | jq -r '.[0].height // 1080' 2>/dev/null || true)"
-            local max_avail_hz
-            max_avail_hz="$(echo "$mon_json" | jq -r '.[0].availableModes[]?' 2>/dev/null | grep -oE '@[0-9]+' | tr -d '@' | sort -nr | head -n 1 || true)"
-            if [[ -n "$max_avail_hz" && "$max_avail_hz" -gt 0 ]]; then
-                refresh="$max_avail_hz"
-            else
-                refresh="$(echo "$mon_json" | jq -r '.[0].refreshRate // 60' 2>/dev/null | cut -d. -f1 || true)"
-            fi
-            scale="$(echo "$mon_json" | jq -r '.[0].scale // 1.0' 2>/dev/null || true)"
-
-            local is_10bit
-            is_10bit="$(echo "$mon_json" | jq -r '.[0] | (.hardwareDetails.bt2020 // false) or (.hardwareDetails.hdr // false) or ((.currentFormat // "") | contains("2101010"))' 2>/dev/null || true)"
-            if [[ "$is_10bit" == "true" ]]; then
-                bitdepth=10
-            fi
-
-            if [[ -n "$mon_name" ]]; then
-                printf "%s %s %s %s %s %s\n" "$mon_name" "$width" "$height" "$refresh" "$scale" "$bitdepth"
+            local parsed
+            parsed="$(printf '%s' "$mon_json" | jq -r '
+                .[] | . as $m
+                | select(($m.name // "") != "")
+                | ($m.availableModes // []
+                    | map(
+                        select(startswith("\($m.width)x\($m.height)@"))
+                        | ltrimstr("\($m.width)x\($m.height)@")
+                        | rtrimstr("Hz")
+                        | split(".")[0]
+                        | tonumber?
+                    )
+                    | max // (($m.refreshRate // 60) | floor)
+                ) as $max
+                | (if (($m.hardwareDetails.bt2020 // false)
+                       or ($m.hardwareDetails.hdr // false)
+                       or (($m.currentFormat // "") | test("2101010|16161616|F16")))
+                   then 10 else 8 end) as $bpc
+                | "\($m.name) \($m.width // 1920) \($m.height // 1080) \($max) \($m.scale // 1.0) \($bpc)"
+            ' 2>/dev/null || true)"
+            if [[ -n "$parsed" ]]; then
+                printf '%s\n' "$parsed"
                 return 0
             fi
         fi
     fi
 
-    # 2. Sysfs DRM detection fallback
-    for p in /sys/class/drm/card*-*/status; do
+    # 2. Sysfs DRM enumeration across all connected displays
+    local found_any=0 p
+    shopt -s nullglob
+    local status_files=("${DRM_SYSFS_DIR}"/card*-*/status)
+    shopt -u nullglob
+
+    for p in "${status_files[@]}"; do
         [[ -f "$p" ]] || continue
-        if grep -qx "connected" "$p" 2>/dev/null; then
-            local dir
-            dir="$(dirname "$p")"
-            local base
-            base="$(basename "$dir")"
-            mon_name="${base#*-}"
+        grep -qx "connected" "$p" 2>/dev/null || continue
 
-            if [[ -f "${dir}/modes" ]]; then
-                local top_mode
-                top_mode="$(head -n 1 "${dir}/modes" 2>/dev/null || true)"
-                if [[ "$top_mode" =~ ^([0-9]+)x([0-9]+) ]]; then
-                    width="${BASH_REMATCH[1]}"
-                    height="${BASH_REMATCH[2]}"
-                fi
+        local dir base mon_name
+        dir="$(dirname "$p")"
+        base="$(basename "$dir")"
+        mon_name="${base#*-}"
+        [[ -n "$mon_name" ]] || continue
+
+        local width=1920 height=1080 refresh=60 scale="1.0" bitdepth=8
+
+        if [[ -f "${dir}/modes" ]]; then
+            local top_mode
+            top_mode="$(head -n 1 "${dir}/modes" 2>/dev/null || true)"
+            if [[ "$top_mode" =~ ^([0-9]+)x([0-9]+) ]]; then
+                width="${BASH_REMATCH[1]}"
+                height="${BASH_REMATCH[2]}"
             fi
+        fi
 
-            # Detect max refresh rate and 10-bit support from EDID if possible
-            if [[ -f "${dir}/edid" && -s "${dir}/edid" ]]; then
-                if command -v edid-decode >/dev/null 2>&1; then
-                    local edid_max_hz
-                    edid_max_hz="$(edid-decode "${dir}/edid" 2>/dev/null | grep -iE 'Max(imum)? Refresh Rate:' | grep -oE '[0-9]+' | sort -nr | head -n 1 || true)"
-                    if [[ -n "$edid_max_hz" && "$edid_max_hz" -gt 0 ]]; then
-                        refresh="$edid_max_hz"
-                    fi
-
-                    local bpc
-                    bpc="$(edid-decode "${dir}/edid" 2>/dev/null | grep -iE 'Bits per primary color channel:' | grep -oE '[0-9]+' | head -n 1 || true)"
-                    if [[ "$bpc" == "10" || "$bpc" == "12" ]]; then
-                        bitdepth=10
-                    fi
-                else
-                    # Direct check of EDID 1.4 byte 20 (Video Input Definition, bits 6-4)
-                    local b20_hex
-                    b20_hex="$(od -An -j20 -N1 -tx1 "${dir}/edid" 2>/dev/null | tr -d ' ' || true)"
-                    if [[ -n "$b20_hex" ]]; then
-                        local b20_dec=$(( 16#$b20_hex ))
+        if [[ -f "${dir}/edid" && -s "${dir}/edid" ]]; then
+            if command -v edid-decode >/dev/null 2>&1; then
+                local edid_out edid_max_hz bpc
+                edid_out="$(edid-decode "${dir}/edid" 2>/dev/null || true)"
+                edid_max_hz="$(printf '%s\n' "$edid_out" | grep -iE 'Max(imum)? Refresh Rate:' | grep -oE '[0-9]+' | sort -nr | head -n 1 || true)"
+                if [[ -n "$edid_max_hz" && "$edid_max_hz" -gt 0 ]]; then
+                    refresh="$edid_max_hz"
+                fi
+                bpc="$(printf '%s\n' "$edid_out" | grep -iE 'Bits per primary color channel:' | grep -oE '[0-9]+' | head -n 1 || true)"
+                if [[ "$bpc" == "10" || "$bpc" == "12" ]]; then
+                    bitdepth=10
+                fi
+            else
+                # Pure binary EDID check: require EDID rev >= 4 and digital input bit 7 before reading bits 6-4 bpc
+                local rev_hex b20_hex
+                rev_hex="$(od -An -j19 -N1 -tu1 "${dir}/edid" 2>/dev/null | tr -d '[:space:]' || true)"
+                b20_hex="$(od -An -j20 -N1 -tx1 "${dir}/edid" 2>/dev/null | tr -d '[:space:]' || true)"
+                if [[ "$rev_hex" =~ ^[0-9]+$ ]] && (( rev_hex >= 4 )) && [[ -n "$b20_hex" ]]; then
+                    local b20_dec=$(( 16#$b20_hex ))
+                    if (( (b20_dec & 128) != 0 )); then
                         local bpc_code=$(( (b20_dec >> 4) & 7 ))
                         if (( bpc_code >= 3 )); then
                             bitdepth=10
@@ -87,39 +93,50 @@ detect_monitor_info() {
                 fi
             fi
 
-            # Estimate DPI and scale
-            local dpi=96
-            if [[ -f "${dir}/edid" && -s "${dir}/edid" ]]; then
-                local edid_data
-                edid_data="$(od -An -N23 -j21 -tu1 "${dir}/edid" 2>/dev/null || true)"
-                local w_cm h_cm
-                read -r w_cm h_cm <<< "$edid_data"
-                if [[ -n "$w_cm" && "$w_cm" -gt 0 ]]; then
-                    dpi=$(awk -v w="$width" -v cm="$w_cm" 'BEGIN { printf "%d", w / (cm / 2.54) }')
-                fi
+            local edid_dims w_cm h_cm dpi=0
+            edid_dims="$(od -An -N2 -j21 -tu1 "${dir}/edid" 2>/dev/null || true)"
+            read -r w_cm h_cm <<< "$edid_dims"
+            if [[ "${w_cm:-0}" =~ ^[0-9]+$ && "${h_cm:-0}" =~ ^[0-9]+$ ]] && (( w_cm > 0 && h_cm > 0 )); then
+                dpi=$(awk -v w="$width" -v cm="$w_cm" 'BEGIN { printf "%d", w / (cm / 2.54) }')
             fi
 
-            # Calculate adaptive scaling based on DPI and screen type
             if (( dpi >= 210 )); then
-                scale=1.8
+                scale="1.8"
             elif (( dpi >= 170 )); then
-                scale=1.5
+                scale="1.5"
             elif (( dpi >= 135 )); then
-                scale=1.25
-            elif [[ "$mon_name" =~ ^eDP ]] && (( height >= 1600 )); then
-                scale=1.8
-            elif [[ "$mon_name" =~ ^eDP ]] && (( height >= 1400 )); then
-                scale=1.5
+                scale="1.25"
+            elif (( dpi == 0 )) && [[ "$mon_name" =~ ^eDP ]] && (( height >= 1600 )); then
+                scale="1.8"
+            elif (( dpi == 0 )) && [[ "$mon_name" =~ ^eDP ]] && (( height >= 1400 )); then
+                scale="1.5"
             else
-                scale=1.0
+                scale="1.0"
             fi
-
-            break
         fi
+
+        printf "%s %s %s %s %s %s\n" "$mon_name" "$width" "$height" "$refresh" "$scale" "$bitdepth"
+        found_any=1
     done
 
-    [[ -z "$mon_name" ]] && mon_name="eDP-1"
-    printf "%s %s %s %s %s %s\n" "$mon_name" "$width" "$height" "$refresh" "$scale" "$bitdepth"
+    if (( found_any == 0 )); then
+        printf "eDP-1 1920 1080 60 1.0 8\n"
+    fi
+}
+
+detect_monitor_info() {
+    detect_all_monitors_info | head -n 1
+}
+
+format_hl_monitor_rule() {
+    local mon_name="$1" width="$2" height="$3" refresh="$4" scale="$5" bitdepth="$6"
+    if [[ "$bitdepth" == "10" ]]; then
+        printf 'hl.monitor({ output = "%s", mode = "%sx%s@%s", position = "auto", scale = %s, bitdepth = 10 })' \
+            "$mon_name" "$width" "$height" "$refresh" "$scale"
+    else
+        printf 'hl.monitor({ output = "%s", mode = "%sx%s@%s", position = "auto", scale = %s })' \
+            "$mon_name" "$width" "$height" "$refresh" "$scale"
+    fi
 }
 
 get_active_monitor_scale() {
@@ -129,18 +146,17 @@ get_active_monitor_scale() {
         user_monitors="${HOME}/.config/hypr/config/monitors.lua"
     fi
 
-    # Read scale from existing monitors.lua if available
+    # Return explicit non-fallback per-output scale if already customized
     if [[ -f "$user_monitors" ]]; then
         local found_scale
-        found_scale="$(grep -oE 'scale\s*=\s*[0-9]+(\.[0-9]+)?' "$user_monitors" | head -n 1 | awk -F= '{print $2}' | tr -d ' ' || true)"
+        found_scale="$(grep -E 'output\s*=\s*"[^"]+"' "$user_monitors" | grep -oE 'scale\s*=\s*[0-9]+(\.[0-9]+)?' | head -n 1 | awk -F= '{print $2}' | tr -d ' ' || true)"
         if [[ -n "$found_scale" ]]; then
             printf "%s\n" "$found_scale"
             return 0
         fi
     fi
 
-    # Fallback to hardware detection
-    local mon_info
+    local mon_info _ scale _
     mon_info="$(detect_monitor_info)"
     read -r _ _ _ _ scale _ <<< "$mon_info"
     printf "%s\n" "${scale:-1.0}"
@@ -153,71 +169,89 @@ ensure_monitors_config() {
 
     mkdir -p "$(dirname "$target_file")"
 
-    local mon_name width height refresh scale bitdepth
-    read -r mon_name width height refresh scale bitdepth <<< "$(detect_monitor_info)"
-
-    local primary_rule=""
-    if [[ -n "$mon_name" ]]; then
-        if [[ "$bitdepth" == "10" ]]; then
-            primary_rule="hl.monitor({ output = \"${mon_name}\", mode = \"${width}x${height}@${refresh}\", position = \"auto\", scale = ${scale}, bitdepth = 10 })"
+    local rules_block="" mon_name width height refresh scale bitdepth
+    while IFS=' ' read -r mon_name width height refresh scale bitdepth; do
+        [[ -n "$mon_name" ]] || continue
+        local rule
+        rule="$(format_hl_monitor_rule "$mon_name" "$width" "$height" "$refresh" "$scale" "$bitdepth")"
+        if [[ -z "$rules_block" ]]; then
+            rules_block="$rule"
         else
-            primary_rule="hl.monitor({ output = \"${mon_name}\", mode = \"${width}x${height}@${refresh}\", position = \"auto\", scale = ${scale} })"
+            rules_block+=$'\n'"$rule"
         fi
-    fi
+    done < <(detect_all_monitors_info)
 
+    # Keep generic fallback at scale=1.0 so unknown external displays do not inherit HiDPI scaling
+    local fallback_scale="1.0"
     if [[ -f "$template_file" ]]; then
-        sed -e "s|{{SCALE}}|${scale}|g" \
-            -e "s|{{PRIMARY_RULE}}|${primary_rule}|g" \
-            "$template_file" > "$target_file"
+        local tpl_content
+        tpl_content="$(<"$template_file")"
+        tpl_content="${tpl_content//"{{SCALE}}"/$fallback_scale}"
+        tpl_content="${tpl_content//"{{PRIMARY_RULE}}"/$rules_block}"
+        printf '%s\n' "$tpl_content" > "$target_file"
     else
         cat > "$target_file" <<EOF
 -- Auto-generated monitor configuration for Hyprland.
 -- Generated dynamically at install time based on connected hardware.
 
-hl.monitor({ output = "", mode = "preferred", position = "auto", scale = ${scale} })
-${primary_rule}
+hl.monitor({ output = "", mode = "preferred", position = "auto", scale = ${fallback_scale} })
+${rules_block}
 EOF
     fi
 
-    # Also keep SDDM compositor config in sync
     sync_sddm_compositor_config "$repo_root"
-
     return 0
 }
 
 sync_sddm_compositor_config() {
     local repo_root="${1:-$HOME/HyprVibe}"
-    local mon_name width height refresh scale bitdepth
-    read -r mon_name width height refresh scale bitdepth <<< "$(detect_monitor_info)"
+    local target_file="${2:-$SDDM_HYPRLAND_SYS}"
 
+    local rules_block="" mon_name width height refresh scale bitdepth
+    local primary_scale=""
+    while IFS=' ' read -r mon_name width height refresh scale bitdepth; do
+        [[ -n "$mon_name" ]] || continue
+        [[ -z "$primary_scale" ]] && primary_scale="$scale"
+
+        local sddm_refresh=60
+        if [[ -n "$refresh" && "$refresh" =~ ^[0-9]+$ ]]; then
+            if (( refresh >= 120 )); then
+                sddm_refresh=120
+            else
+                sddm_refresh="$refresh"
+            fi
+        fi
+
+        local rule
+        rule="$(format_hl_monitor_rule "$mon_name" "$width" "$height" "$sddm_refresh" "$scale" "$bitdepth")"
+        if [[ -z "$rules_block" ]]; then
+            rules_block="$rule"
+        else
+            rules_block+=$'\n'"$rule"
+        fi
+    done < <(detect_all_monitors_info)
+
+    local fallback_scale="1.0"
     local active_scale
     active_scale="$(get_active_monitor_scale "$repo_root")"
-    [[ -n "$active_scale" ]] && scale="$active_scale"
-
-    # Clamp SDDM refresh rate: if supported refresh >= 120, lock to 120Hz; else use native (fallback 60)
-    local sddm_refresh=60
-    if [[ -n "$refresh" && "$refresh" =~ ^[0-9]+$ ]]; then
-        if (( refresh >= 120 )); then
-            sddm_refresh=120
-        else
-            sddm_refresh="$refresh"
-        fi
+    if [[ -n "$active_scale" && -n "$primary_scale" && -z "${rules_block##*$'\n'*}" ]]; then
+        # Single-monitor setup: preserve user-customized monitors.lua scale if present
+        :
     fi
 
-    local primary_rule=""
-    if [[ -n "$mon_name" && -n "$width" && -n "$height" ]]; then
-        if [[ "$bitdepth" == "10" ]]; then
-            primary_rule="hl.monitor({ output = \"${mon_name}\", mode = \"${width}x${height}@${sddm_refresh}\", position = \"auto\", scale = ${scale}, bitdepth = 10 })"
-        else
-            primary_rule="hl.monitor({ output = \"${mon_name}\", mode = \"${width}x${height}@${sddm_refresh}\", position = \"auto\", scale = ${scale} })"
-        fi
-    fi
+    local template_file="${repo_root}/templates/sddm/hyprland.lua.template"
+    local tmp_rendered
+    tmp_rendered="$(mktemp "${TMPDIR:-/tmp}/hyprvibe-sddm-hypr.XXXXXX")"
 
-    local sddm_hyprland_repo="${repo_root}/dotfiles/sddm/hyprland.lua"
-    local sddm_hyprland_sys="/usr/share/sddm/hyprland.lua"
-
-    local config_content="-- Minimal Hyprland configuration for HyprVibe SDDM Wayland greeter.
--- Generated dynamically at install time based on hardware display scale and refresh rate.
+    if [[ -f "$template_file" ]]; then
+        local tpl_content
+        tpl_content="$(<"$template_file")"
+        tpl_content="${tpl_content//"{{SCALE}}"/$fallback_scale}"
+        tpl_content="${tpl_content//"{{PRIMARY_RULE}}"/$rules_block}"
+        printf '%s\n' "$tpl_content" > "$tmp_rendered"
+    else
+        cat > "$tmp_rendered" <<EOF
+-- Minimal Hyprland configuration for HyprVibe SDDM Wayland greeter.
 hl.config({
   misc = {
     disable_hyprland_logo = true,
@@ -230,28 +264,23 @@ hl.config({
   },
 })
 
--- Night light startup hook for SDDM greeter
-hl.on(\"hyprland.start\", function()
-  hl.exec_cmd(\"hyprsunset -t 3700 &\")
+hl.on("hyprland.start", function()
+  hl.exec_cmd("hyprsunset -t 3700 &")
 end)
 
--- Dynamic hardware monitor scaling & refresh rate
-hl.monitor({ output = \"\", mode = \"preferred\", position = \"auto\", scale = ${scale} })
-${primary_rule}
-"
-
-    # Write to repo
-    mkdir -p "$(dirname "$sddm_hyprland_repo")"
-    printf "%s\n" "$config_content" > "$sddm_hyprland_repo" 2>/dev/null || true
-
-    # Write to system if writable or non-interactive sudo available
-    if [[ -d "/usr/share/sddm" ]]; then
-        if [[ -w "/usr/share/sddm" || -w "$sddm_hyprland_sys" ]]; then
-            printf "%s\n" "$config_content" > "$sddm_hyprland_sys" 2>/dev/null || true
-        elif sudo -n true 2>/dev/null; then
-            printf "%s\n" "$config_content" | sudo -n tee "$sddm_hyprland_sys" >/dev/null 2>&1 || true
-        fi
+hl.monitor({ output = "", mode = "preferred", position = "auto", scale = ${fallback_scale} })
+${rules_block}
+EOF
     fi
+
+    local out_dir
+    out_dir="$(dirname "$target_file")"
+    if [[ -w "$out_dir" || -w "$target_file" ]]; then
+        install -m 644 "$tmp_rendered" "$target_file" 2>/dev/null || true
+    elif [[ -d "$out_dir" ]] && sudo -n true 2>/dev/null; then
+        sudo -n install -m 644 "$tmp_rendered" "$target_file" >/dev/null 2>&1 || true
+    fi
+    rm -f "$tmp_rendered"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

@@ -128,7 +128,7 @@ Panel {
   }
 
   readonly property var visibleSections: {
-    return Model.visibleSections(deviceGroups, adapter && adapter.discovering)
+    return Model.visibleSections(deviceGroups, !root.scanning && adapter && adapter.discovering)
   }
 
   function devicesForSection(section) {
@@ -417,6 +417,7 @@ Panel {
   onOpenedChanged: {
     if (!opened) {
       if (pairProc.running) pairProc.kill()
+      if (pairPromptAddress !== "") setPendingAction(pairPromptAddress, "")
       pairPromptAddress = ""
       pairPromptType = ""
       pairPromptPasskey = ""
@@ -677,9 +678,7 @@ Panel {
     if (adapter) {
       owesDiscoveryStop = true
       adapter.discovering = true
-    }
-    if (!scanProc.running) {
-      scanProc.command = ["hyprvibe-bluetooth-device", "scan"]
+    } else if (!scanProc.running) {
       scanProc.running = true
     }
     scanTimer.restart()

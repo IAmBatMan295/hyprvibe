@@ -1,13 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Detect battery device
+# Detect system battery device (BAT*, CMB*, etc.; skip HID Device batteries)
+POWER_SUPPLY_DIR="${POWER_SUPPLY_DIR:-/sys/class/power_supply}"
 BAT_DIR=""
-for b in /sys/class/power_supply/BAT*; do
-  if [[ -d "$b" && -f "$b/capacity" && -f "$b/status" ]]; then
-    BAT_DIR="$b"
-    break
+for b in "$POWER_SUPPLY_DIR"/*; do
+  [[ -d "$b" && -f "$b/capacity" && -f "$b/status" ]] || continue
+  if [[ -f "$b/type" ]]; then
+    ps_type="$(< "$b/type")"
+    ps_type="${ps_type//[[:space:]]/}"
+    [[ "$ps_type" == "Battery" ]] || continue
   fi
+  if [[ -f "$b/scope" ]]; then
+    ps_scope="$(< "$b/scope")"
+    ps_scope="${ps_scope//[[:space:]]/}"
+    [[ "$ps_scope" == "Device" ]] && continue
+  fi
+  BAT_DIR="$b"
+  break
 done
 
 # If no battery found (e.g. desktop PC), exit cleanly

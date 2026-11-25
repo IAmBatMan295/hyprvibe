@@ -109,6 +109,7 @@ Item {
     acceptedButtons: Qt.LeftButton | Qt.RightButton
 
     function valueFromX(x) {
+      if (track.width <= 0) return root.minimum
       var clamped = Math.max(0, Math.min(track.width, x))
       var raw = root.minimum + (clamped / track.width) * root.range
       if (root.integer) raw = Math.round(raw)

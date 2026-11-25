@@ -5,7 +5,8 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REAL_SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${REAL_SCRIPT}")" && pwd)"
 ROOT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 THEME_LIB="${SCRIPT_DIR}/lib/theme-engine.sh"
 
@@ -17,11 +18,13 @@ fi
 # shellcheck disable=SC1090
 source "$THEME_LIB"
 
-THEMES_DIR="${ROOT_DIR}/themes"
-USER_THEMES_DIR="${HOME}/.config/hyprvibe/themes"
-TEMPLATES_DIR="${ROOT_DIR}/templates/themed"
-STATE_DIR="${HOME}/.local/state/hyprvibe/current"
-LOCK_FILE="${XDG_RUNTIME_DIR:-/tmp}/hyprvibe-theme.lock"
+THEMES_DIR="${THEMES_DIR:-${ROOT_DIR}/themes}"
+USER_THEMES_DIR="${USER_THEMES_DIR:-${HOME}/.config/hyprvibe/themes}"
+TEMPLATES_DIR="${TEMPLATES_DIR:-${ROOT_DIR}/templates/themed}"
+STATE_DIR="${STATE_DIR:-${HOME}/.local/state/hyprvibe/current}"
+SDDM_THEME_DIR="${SDDM_THEME_DIR:-/usr/share/sddm/themes/hyprvibe}"
+REPO_SDDM_DIR="${REPO_SDDM_DIR:-${ROOT_DIR}/dotfiles/sddm/themes/hyprvibe}"
+LOCK_FILE="${XDG_RUNTIME_DIR:-/tmp}/hyprvibe-theme-${UID}.lock"
 
 usage() {
     cat << EOF
@@ -86,46 +89,135 @@ cmd_get() {
     fi
 }
 
+resolve_theme_target() {
+    local query="$1"
+    local norm_q dir candidate cname norm_c
+    # 1. Exact directory match first (preserves underscores like tokyo_night)
+    for dir in "$USER_THEMES_DIR" "$THEMES_DIR"; do
+        if [[ -d "${dir}/${query}" && -f "${dir}/${query}/colors.toml" ]]; then
+            printf '%s\t%s\n' "$query" "${dir}/${query}"
+            return 0
+        fi
+    done
+
+    # 2. Case/separator-normalized match (handles "Tokyo Night" -> "tokyo_night" or "forest-green")
+    norm_q="$(printf '%s' "$query" | tr '[:upper:]' '[:lower:]' | tr ' _' '--')"
+    for dir in "$USER_THEMES_DIR" "$THEMES_DIR"; do
+        [[ -d "$dir" ]] || continue
+        for candidate in "$dir"/*; do
+            [[ -d "$candidate" && -f "${candidate}/colors.toml" ]] || continue
+            cname="$(basename "$candidate")"
+            norm_c="$(printf '%s' "$cname" | tr '[:upper:]' '[:lower:]' | tr ' _' '--')"
+            if [[ "$norm_c" == "$norm_q" ]]; then
+                printf '%s\t%s\n' "$cname" "$candidate"
+                return 0
+            fi
+        done
+    done
+    return 1
+}
+
+sync_sddm_target() {
+    local target_root="$1"
+    local bg_src="$2"
+    local accent="$3" bg_col="$4" fg_col="$5" muted="$6" err_col="$7" border_col="$8"
+    [[ -d "$target_root" ]] || return 0
+
+    local bg_name="default-bg.jpg"
+    local assets_dir="${target_root}/assets"
+    if [[ -n "$bg_src" && -f "$bg_src" ]]; then
+        local ext="${bg_src##*.}"
+        ext="${ext,,}"
+        [[ "$ext" == "jpeg" || "$ext" == "jpg" || "$ext" == "png" || "$ext" == "webp" ]] || ext="jpg"
+        bg_name="default-bg.${ext}"
+        [[ -d "$assets_dir" || ! -w "$target_root" ]] || mkdir -p "$assets_dir" 2>/dev/null || true
+        if [[ -d "$assets_dir" && -w "$assets_dir" ]]; then
+            chmod 755 "$assets_dir" 2>/dev/null || true
+            local tmp_bg
+            tmp_bg="$(mktemp "${assets_dir}/.bg.XXXXXX")"
+            if cp -f "$bg_src" "$tmp_bg" 2>/dev/null; then
+                chmod 644 "$tmp_bg" 2>/dev/null || true
+                rm -f "${assets_dir}"/default-bg.* 2>/dev/null || true
+                mv -f "$tmp_bg" "${assets_dir}/${bg_name}" 2>/dev/null || rm -f "$tmp_bg"
+            else
+                rm -f "$tmp_bg"
+            fi
+        fi
+    elif [[ -d "$assets_dir" ]]; then
+        local existing_bg
+        shopt -s nullglob
+        for existing_bg in "${assets_dir}"/default-bg.*; do
+            bg_name="$(basename "$existing_bg")"
+            break
+        done
+        shopt -u nullglob
+    fi
+
+    local conf_path="${target_root}/theme.conf"
+    local conf_body="[General]
+background=assets/${bg_name}
+blurRadius=50
+accentColor=${accent}
+surfaceColor=${bg_col}
+textColor=${fg_col}
+mutedColor=${muted}
+errorColor=${err_col}
+borderColor=${border_col}
+fontFamily=JetBrainsMono Nerd Font
+fontSize=13"
+
+    if [[ -w "$target_root" ]]; then
+        local tmp_conf
+        tmp_conf="$(mktemp "${target_root}/.theme.conf.XXXXXX" 2>/dev/null || true)"
+        if [[ -n "$tmp_conf" ]]; then
+            printf '%s\n' "$conf_body" > "$tmp_conf"
+            chmod 644 "$tmp_conf" 2>/dev/null || true
+            mv -f "$tmp_conf" "$conf_path" 2>/dev/null || rm -f "$tmp_conf"
+        fi
+    elif [[ -w "$conf_path" ]]; then
+        printf '%s\n' "$conf_body" > "$conf_path" 2>/dev/null || true
+        chmod 644 "$conf_path" 2>/dev/null || true
+    fi
+}
+
 cmd_set() {
-    local theme_name="${1:-}"
-    if [[ -z "$theme_name" ]]; then
+    local requested_name="${1:-}"
+    if [[ -z "$requested_name" ]]; then
         echo "Error: Theme name required. Usage: hyprvibe-theme set <theme_name>" >&2
         return 1
     fi
 
-    # Normalize theme name
-    theme_name="$(echo "$theme_name" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')"
-
-    local target_dir=""
-    if [[ -d "${USER_THEMES_DIR}/${theme_name}" && -f "${USER_THEMES_DIR}/${theme_name}/colors.toml" ]]; then
-        target_dir="${USER_THEMES_DIR}/${theme_name}"
-    elif [[ -d "${THEMES_DIR}/${theme_name}" && -f "${THEMES_DIR}/${theme_name}/colors.toml" ]]; then
-        target_dir="${THEMES_DIR}/${theme_name}"
-    else
-        echo "Error: Theme '$theme_name' does not exist." >&2
+    local resolved="" theme_name="" target_dir=""
+    if ! resolved="$(resolve_theme_target "$requested_name")"; then
+        echo "Error: Theme '$requested_name' does not exist." >&2
         return 1
     fi
+    IFS=$'\t' read -r theme_name target_dir <<<"$resolved"
 
-    # Acquire lock to prevent race conditions
+    # Acquire lock to prevent concurrent writes
     exec 9>"$LOCK_FILE"
     flock 9
 
     mkdir -p "$STATE_DIR"
 
-    # Load palette
+    # Load palette & atomically render dynamic templates into STATE_DIR
     load_colors_file "${target_dir}/colors.toml"
-
-    # Render dynamic templates into STATE_DIR
     render_all_templates "$TEMPLATES_DIR" "$STATE_DIR"
 
-    # Copy current colors.toml for reference
-    cp "${target_dir}/colors.toml" "${STATE_DIR}/colors.toml"
+    # Atomically update colors.toml & theme.name (keeps file watchers consistent)
+    local tmp_colors tmp_name
+    tmp_colors="$(mktemp "${STATE_DIR}/.colors.toml.XXXXXX")"
+    cp "${target_dir}/colors.toml" "$tmp_colors"
+    chmod 644 "$tmp_colors" 2>/dev/null || true
+    mv -f "$tmp_colors" "${STATE_DIR}/colors.toml"
 
-    # Record active theme
-    echo "$theme_name" > "${STATE_DIR}/theme.name"
+    tmp_name="$(mktemp "${STATE_DIR}/.theme.name.XXXXXX")"
+    printf '%s\n' "$theme_name" > "$tmp_name"
+    chmod 644 "$tmp_name" 2>/dev/null || true
+    mv -f "$tmp_name" "${STATE_DIR}/theme.name"
     ln -sfn "$target_dir" "${STATE_DIR}/theme"
 
-    # Sync theme backgrounds to ~/Pictures/Current-Wallpapers and signal wallpaper-changer.sh
+    # Sync theme backgrounds as symlinks to ~/Pictures/Current-Wallpapers & signal wallpaper-changer.sh
     local wall_dir="${USER_HOME:-$HOME}/Pictures/Current-Wallpapers"
     if [[ -d "${target_dir}/backgrounds" ]]; then
         shopt -s nullglob
@@ -133,11 +225,11 @@ cmd_set() {
         shopt -u nullglob
         if (( ${#bgs[@]} > 0 )); then
             mkdir -p "$wall_dir"
-            # Delete old wallpapers (files only) from Current-Wallpapers directory
-            find "$wall_dir" -maxdepth 1 -type f -delete
-            # Copy new theme backgrounds
-            cp -a "${bgs[@]}" "$wall_dir/"
-            # Signal wallpaper-changer.sh or launch it if not running
+            find "$wall_dir" -maxdepth 1 \( -type f -o -type l \) -delete
+            local bg
+            for bg in "${bgs[@]}"; do
+                ln -sfn "$bg" "${wall_dir}/$(basename "$bg")"
+            done
             local changer_script="${USER_HOME:-$HOME}/.config/hypr/scripts/wallpaper-changer.sh"
             if pgrep -f wallpaper-changer.sh >/dev/null 2>&1; then
                 pkill -SIGUSR1 -f wallpaper-changer.sh 2>/dev/null || true
@@ -148,15 +240,16 @@ cmd_set() {
                     awww-daemon >/dev/null 2>&1 &
                     sleep 0.1
                 fi
-                local rate
-                rate=$(hyprctl monitors 2>/dev/null | awk -F'[@.]' '/@/ {print $2; exit}' || echo "60")
+                local rate="60"
+                if command -v hyprctl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+                    rate=$(hyprctl monitors -j 2>/dev/null | jq -r '(([.[] | select(.focused == true)] | .[0]) // .[0] // empty) | .refreshRate // 60 | floor' 2>/dev/null || echo "60")
+                fi
                 awww img "${bgs[0]}" --transition-type random --transition-duration 1.2 --transition-fps "${rate:-60}" --resize crop >/dev/null 2>&1 || true
             fi
         fi
     fi
 
-    # Sync SDDM theme background and colors
-    local sddm_theme_dir="/usr/share/sddm/themes/hyprvibe"
+    # Sync SDDM theme background and colors (preserving actual image extension)
     local sddm_bg=""
     if [[ -d "${target_dir}/backgrounds" ]]; then
         shopt -s nullglob
@@ -175,47 +268,8 @@ cmd_set() {
     sddm_error="$(get_theme_color "red" "#f38ba8")"
     sddm_border="$(get_theme_color "selection" "#45475a")"
 
-    # Sync gitignored local asset cache and theme.conf for test-mode
-    local repo_sddm_dir="${ROOT_DIR}/dotfiles/sddm/themes/hyprvibe"
-    if [[ -d "$repo_sddm_dir" ]]; then
-        if [[ -n "$sddm_bg" && -f "$sddm_bg" ]]; then
-            mkdir -p "${repo_sddm_dir}/assets" 2>/dev/null || true
-            cp -f "$sddm_bg" "${repo_sddm_dir}/assets/default-bg.jpg" 2>/dev/null || true
-        fi
-        cat > "${repo_sddm_dir}/theme.conf" 2>/dev/null <<EOF || true
-[General]
-background=assets/default-bg.jpg
-blurRadius=50
-accentColor=${sddm_accent}
-surfaceColor=${sddm_bg_col}
-textColor=${sddm_fg_col}
-mutedColor=${sddm_muted}
-errorColor=${sddm_error}
-borderColor=${sddm_border}
-fontFamily=JetBrainsMono Nerd Font
-fontSize=13
-EOF
-    fi
-
-    if [[ -d "$sddm_theme_dir" && -w "$sddm_theme_dir" ]]; then
-        if [[ -n "$sddm_bg" && -f "$sddm_bg" ]]; then
-            mkdir -p "${sddm_theme_dir}/assets" 2>/dev/null || true
-            cp -f "$sddm_bg" "${sddm_theme_dir}/assets/default-bg.jpg" 2>/dev/null || true
-        fi
-        cat > "${sddm_theme_dir}/theme.conf" 2>/dev/null <<EOF || true
-[General]
-background=assets/default-bg.jpg
-blurRadius=50
-accentColor=${sddm_accent}
-surfaceColor=${sddm_bg_col}
-textColor=${sddm_fg_col}
-mutedColor=${sddm_muted}
-errorColor=${sddm_error}
-borderColor=${sddm_border}
-fontFamily=JetBrainsMono Nerd Font
-fontSize=13
-EOF
-    fi
+    sync_sddm_target "$REPO_SDDM_DIR" "$sddm_bg" "$sddm_accent" "$sddm_bg_col" "$sddm_fg_col" "$sddm_muted" "$sddm_error" "$sddm_border"
+    sync_sddm_target "$SDDM_THEME_DIR" "$sddm_bg" "$sddm_accent" "$sddm_bg_col" "$sddm_fg_col" "$sddm_muted" "$sddm_error" "$sddm_border"
 
     # GTK / GSettings retint (if desktop session active)
     if command -v gsettings >/dev/null 2>&1 && [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
@@ -233,16 +287,25 @@ EOF
         if [[ -f "$icon_file" && -s "$icon_file" ]]; then
             local icon_theme
             icon_theme="$(<"$icon_file")"
-            gsettings set org.gnome.desktop.interface icon-theme "$icon_theme" 2>/dev/null || true
+            icon_theme="${icon_theme//[[:space:]]/}"
+            if [[ -n "$icon_theme" ]]; then
+                gsettings set org.gnome.desktop.interface icon-theme "$icon_theme" 2>/dev/null || true
+            fi
         fi
     fi
 
+    # Push theme cleanly to running Quickshell once
+    if command -v quickshell >/dev/null 2>&1 && pgrep -x quickshell >/dev/null 2>&1 && command -v base64 >/dev/null 2>&1; then
+        local colors_b64="" shell_b64=""
+        [[ -f "${STATE_DIR}/colors.toml" ]] && colors_b64="$(base64 -w0 "${STATE_DIR}/colors.toml" 2>/dev/null || true)"
+        [[ -f "${STATE_DIR}/shell.toml" ]] && shell_b64="$(base64 -w0 "${STATE_DIR}/shell.toml" 2>/dev/null || true)"
+        quickshell ipc call shell applyTheme "$colors_b64" "$shell_b64" >/dev/null 2>&1 || true
+    fi
 
-    # Reload desktop components in parallel
+    # Reload desktop components
     if command -v hyprctl >/dev/null 2>&1 && pgrep -x Hyprland >/dev/null 2>&1; then
         hyprctl reload >/dev/null 2>&1 &
     fi
-
 
     if command -v dunstctl >/dev/null 2>&1 && pgrep -x dunst >/dev/null 2>&1; then
         dunstctl reload >/dev/null 2>&1 &
@@ -252,12 +315,13 @@ EOF
         tmux source-file "${STATE_DIR}/tmux.conf" 2>/dev/null || true
     fi
 
-    # Reload active Neovim instances
-    if pgrep -x nvim >/dev/null 2>&1; then
+    # Reload active Neovim instances (theme-sync guards against double reload via disk_theme check)
+    if command -v nvim >/dev/null 2>&1 && pgrep -x nvim >/dev/null 2>&1; then
         shopt -s nullglob
+        local sock
         for sock in "${XDG_RUNTIME_DIR:-/tmp}"/nvim.*.0 "${XDG_RUNTIME_DIR:-/tmp}"/nvim* /tmp/nvim*/0; do
             if [[ -S "$sock" ]]; then
-                nvim --server "$sock" --remote-send '<Cmd>doautocmd FocusGained<CR>' 2>/dev/null || true
+                timeout 1 nvim --server "$sock" --remote-send '<Cmd>doautocmd FocusGained<CR>' 2>/dev/null || true
             fi
         done
         shopt -u nullglob
@@ -284,11 +348,13 @@ cmd_menu() {
     c_dim="$(cmd_get muted 2>/dev/null || echo '#8e8e8e')"
 
     local display_themes=""
+    local -A TITLE_TO_SLUG=()
     local line
     while IFS= read -r line; do
         [[ -z "$line" ]] && continue
         local title
         title="$(format_theme_title "$line")"
+        TITLE_TO_SLUG["$title"]="$line"
         local row_color="$c_dim"
         if [[ "$line" == "$current" ]]; then
             row_color="$c_active"
@@ -307,16 +373,17 @@ cmd_menu() {
     local rasi_file="${HOME}/.config/rofi/theme-switcher.rasi"
     local selected=""
     if [[ -f "$rasi_file" ]]; then
-        selected=$(echo "$display_themes" | rofi -dmenu -markup-rows -theme "$rasi_file" -select "$current_title" 2>/dev/null || true)
+        selected=$(printf '%s\n' "$display_themes" | rofi -dmenu -markup-rows -theme "$rasi_file" -select "$current_title" 2>/dev/null || true)
     else
-        selected=$(echo "$display_themes" | rofi -dmenu -markup-rows -p "Theme" -select "$current_title" 2>/dev/null || true)
+        selected=$(printf '%s\n' "$display_themes" | rofi -dmenu -markup-rows -p "Theme" -select "$current_title" 2>/dev/null || true)
     fi
 
-    # Strip any Pango markup tags from selection
-    selected=$(echo "$selected" | sed -E 's/<[^>]*>//g')
+    # Strip any Pango markup tags from selection and map title directly back to directory slug
+    selected=$(printf '%s' "$selected" | sed -E 's/<[^>]*>//g')
 
     if [[ -n "$selected" ]]; then
-        cmd_set "$selected"
+        local resolved_slug="${TITLE_TO_SLUG[$selected]:-$selected}"
+        cmd_set "$resolved_slug"
     fi
 }
 

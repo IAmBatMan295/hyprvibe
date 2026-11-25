@@ -30,7 +30,7 @@ Rectangle {
             root.loginFailed = true
             passwordInput.text = ""
             passwordInput.focus = true
-            shakeAnim.start()
+            shakeAnim.restart()
         }
         function onLoginSucceeded() {
             root.loginFailed = false
@@ -159,6 +159,11 @@ Rectangle {
 
                 property bool showPassword: false
 
+                transform: Translate {
+                    id: shakeTranslate
+                    x: 0
+                }
+
                 Rectangle {
                     id: inputFrame
                     anchors.fill: parent
@@ -271,14 +276,14 @@ Rectangle {
                     }
                 }
 
-                // Shake Animation on Failed Login
+                // Shake Animation on Failed Login (animates Translate.x cleanly around anchor)
                 SequentialAnimation {
                     id: shakeAnim
-                    NumberAnimation { target: inputContainer; property: "x"; from: 0; to: -10; duration: 50; easing.type: Easing.OutQuad }
-                    NumberAnimation { target: inputContainer; property: "x"; from: -10; to: 10; duration: 50; easing.type: Easing.InOutQuad }
-                    NumberAnimation { target: inputContainer; property: "x"; from: 10; to: -6; duration: 50; easing.type: Easing.InOutQuad }
-                    NumberAnimation { target: inputContainer; property: "x"; from: -6; to: 6; duration: 50; easing.type: Easing.InOutQuad }
-                    NumberAnimation { target: inputContainer; property: "x"; from: 6; to: 0; duration: 50; easing.type: Easing.OutQuad }
+                    NumberAnimation { target: shakeTranslate; property: "x"; from: 0; to: -10; duration: 50; easing.type: Easing.OutQuad }
+                    NumberAnimation { target: shakeTranslate; property: "x"; from: -10; to: 10; duration: 50; easing.type: Easing.InOutQuad }
+                    NumberAnimation { target: shakeTranslate; property: "x"; from: 10; to: -6; duration: 50; easing.type: Easing.InOutQuad }
+                    NumberAnimation { target: shakeTranslate; property: "x"; from: -6; to: 6; duration: 50; easing.type: Easing.InOutQuad }
+                    NumberAnimation { target: shakeTranslate; property: "x"; from: 6; to: 0; duration: 50; easing.type: Easing.OutQuad }
                 }
             }
 

@@ -37,8 +37,6 @@ Panel {
   property var wifiNetworks: []
   property bool scanning: false
   property bool wifiStationAvailable: false
-  property string dnsProvider: ""
-  property string pendingDnsProvider: ""
   // Wi-Fi band state from `hyprvibe-network-band`. `bandCurrent` is the band
   // the radio is actually on; `bandSelected` is the pinned choice ("auto" when
   // nothing is pinned), and the two differ whenever Auto is in effect.
@@ -83,9 +81,9 @@ Panel {
   property bool cursorActive: false
 
   // Keyboard focus zone for the panel. j/k crosses row boundaries:
-  // header actions ⇄ band ⇄ DNS row ⇄ Wi-Fi networks. h/l move
-  // within header actions, band pills, or DNS providers.
-  property string focusSection: "dns"  // "header" | "band" | "dns" | "wifi"
+  // header actions ⇄ band ⇄ Wi-Fi networks. h/l move within header
+  // actions, band pills, or Wi-Fi row action buttons.
+  property string focusSection: "wifi"  // "header" | "band" | "wifi"
   property int headerIndex: 0
   readonly property bool canDisconnect: !!connectedWifiNetwork
   readonly property bool headerHasDisconnect: false
@@ -101,8 +99,6 @@ Panel {
   readonly property bool refreshHeaderHasCursor: cursorActive && focusSection === "header" && headerIndex === refreshHeaderIndex
   readonly property bool toggleHeaderHasCursor: cursorActive && focusSection === "header" && headerIndex === toggleHeaderIndex
   readonly property string toggleHint: Networking.wifiEnabled ? "Turn Wi-Fi off" : "Turn Wi-Fi on"
-  readonly property var dnsProviders: ["DHCP", "Cloudflare", "Google", "Custom"]
-  property int dnsIndex: 0
   // ["2.4", "5", ...], or empty when there is nothing to choose between.
   // Wi-Fi only: on Ethernet the band of a secondary radio is not what the
   // panel is describing.
@@ -140,7 +136,7 @@ Panel {
 
   onCanSelectBandChanged: {
     if (!canSelectBand && focusSection === "band") {
-      focusSection = "dns"
+      focusSection = wifiNetworks.length > 0 ? "wifi" : "header"
       bandAutoFocused = true
     }
   }
@@ -189,15 +185,6 @@ Panel {
     headerIndex = index
   }
 
-  function selectDnsByDelta(delta) {
-    dnsIndex = Math.max(0, Math.min(dnsProviders.length - 1, dnsIndex + delta))
-  }
-
-  function activateDns() {
-    if (dnsIndex < 0 || dnsIndex >= dnsProviders.length) return
-    setDns(dnsProviders[dnsIndex])
-  }
-
   function selectBandByDelta(delta) {
     bandIndex = Math.max(0, Math.min(bandAvailable.length - 1, bandIndex + delta))
   }
@@ -240,7 +227,7 @@ Panel {
   }
 
   // Single cursor model: exactly one highlighted spot across the whole
-  // panel, located via `focusSection` + (`headerIndex` | `dnsIndex` |
+  // panel, located via `focusSection` + (`headerIndex` | `bandIndex` |
   // `selectedIndex`). Mouse hover and keyboard nav both mutate this state
   // at the root; items never read containsMouse for visuals. See
   // CursorSurface for the shared chrome shared by rows and pills.
@@ -277,9 +264,7 @@ Panel {
       refresh(true)
       selectedIndex = wifiNetworks.length > 0 ? 0 : -1
       wifiActionFocused = false
-      focusSection = wifiNetworks.length > 0 ? "wifi" : "dns"
-      var idx = dnsProviders.indexOf(dnsProvider)
-      dnsIndex = idx >= 0 ? idx : 0
+      focusSection = wifiNetworks.length > 0 ? "wifi" : (canSelectBand ? "band" : "header")
       syncBandIndex()
       cursorActive = false
     } else {
@@ -304,12 +289,12 @@ Panel {
 
   // Keep selectedIndex valid as scans refresh the network list.
   // If the list empties (station gone, e.g. wifi off), bounce the cursor
-  // back to the DNS row so the panel doesn't end up with no cursor at all.
+  // back cleanly so the panel doesn't end up with no cursor at all.
   onWifiNetworksChanged: {
     if (wifiNetworks.length === 0) {
       selectedIndex = -1
       wifiActionFocused = false
-      if (focusSection === "wifi") focusSection = "dns"
+      if (focusSection === "wifi") focusSection = canSelectBand ? "band" : "header"
     } else if (passwordSsid !== "") {
       var passwordIndex = wifiIndexForSsid(passwordSsid)
       if (passwordIndex >= 0) {
@@ -398,10 +383,6 @@ Panel {
 
   function refresh(scanWifi) {
     if (scanWifi === undefined) scanWifi = false
-    if (!dnsProc.running) {
-      dnsProc.command = ["bash", "-c", root.dnsCommand("")]
-      dnsProc.running = true
-    }
     if (!bandProc.running) {
       bandProc.command = ["hyprvibe-network-band"]
       bandProc.running = true
@@ -473,11 +454,6 @@ Panel {
     return Model.wifiIconFor(strength)
   }
 
-  function updateDns(raw) {
-    var value = String(raw || "").trim()
-    dnsProvider = value || "DHCP"
-  }
-
   function updateBand(raw) {
     var status = Model.parseBandStatus(raw)
 
@@ -500,28 +476,6 @@ Panel {
     root.pendingBand = band
     actionProc.command = ["hyprvibe-network-band", band]
     actionProc.running = true
-  }
-
-  function dnsCommand(provider) {
-    var command = "hyprvibe-dns"
-    if (provider) command += " " + Util.shellQuote(provider)
-    return command
-  }
-
-  function setDns(provider) {
-    if (!root.bar || !provider || actionProc.running) return
-
-    if (provider === "Custom") {
-      var launcher = "hyprvibe-launch-floating-terminal-with-presentation"
-      root.bar.run(launcher + " " + Util.shellQuote(root.dnsCommand(provider)))
-      root.close()
-      return
-    }
-
-    root.pendingDnsProvider = provider
-    actionProc.command = ["bash", "-c", root.dnsCommand(provider)]
-    actionProc.running = true
-    root.close()
   }
 
   function requiresCredentials(security) {
@@ -622,9 +576,23 @@ Panel {
     id: enterpriseConnect
     property string secret: ""
     stdinEnabled: true
+    stderr: StdioCollector { id: enterpriseStderr; waitForEnd: true }
     onStarted: {
       write(secret + "\n")
       secret = ""
+    }
+    onExited: function(exitCode) {
+      if (root.actionKind !== "connect") return
+      if (exitCode === 0) {
+        root.clearNetworkAction()
+      } else {
+        var net = root.networkForSsid(root.actionSsid)
+        var err = String(enterpriseStderr.text || "").toLowerCase()
+        var reason = (err.indexOf("secret") !== -1 || err.indexOf("auth") !== -1 || err.indexOf("password") !== -1)
+          ? ConnectionFailReason.WifiAuthTimeout
+          : ConnectionFailReason.WifiClientFailed
+        root.failNetworkAction(net, reason)
+      }
     }
   }
 
@@ -697,14 +665,6 @@ Panel {
   }
 
   Process {
-    id: dnsProc
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.updateDns(text)
-    }
-  }
-
-  Process {
     id: bandProc
     stdout: StdioCollector {
       waitForEnd: true
@@ -726,17 +686,13 @@ Panel {
     }
   }
 
-  // Action runner for DNS provider changes. Wi-Fi actions use the
+  // Action runner for Wi-Fi band changes. Wi-Fi actions use the
   // Quickshell.Networking NetworkManager backend directly.
   Process {
     id: actionProc
     stdout: StdioCollector { id: actionStdout; waitForEnd: true }
     stderr: StdioCollector { id: actionStderr; waitForEnd: true }
     onExited: function(exitCode) {
-      if (root.pendingDnsProvider !== "") {
-        if (exitCode === 0) root.dnsProvider = root.pendingDnsProvider
-        root.pendingDnsProvider = ""
-      }
       if (root.pendingBand !== "") {
         // A refused or reverted pin leaves bandSelected alone, so the pills
         // keep showing what is actually in force rather than what was asked.
@@ -826,15 +782,16 @@ Panel {
           if (dy >= 0) return
         }
         if (dy !== 0) {
-          // Vertical order is header ⇄ band ⇄ DNS ⇄ wifi, with the band section
+          // Vertical order is header ⇄ band ⇄ wifi, with the band section
           // dropping out of the chain entirely when it isn't on screen.
           if (root.focusSection === "header") {
             if (dy > 0) {
               if (root.canSelectBand) {
                 root.focusSection = "band"
                 root.bandAutoFocused = true
-              } else {
-                root.focusSection = "dns"
+              } else if (root.wifiNetworks.length > 0) {
+                root.focusSection = "wifi"
+                if (root.selectedIndex < 0) root.selectedIndex = 0
               }
             }
           } else if (root.focusSection === "band") {
@@ -849,14 +806,12 @@ Panel {
               }
             } else if (root.bandAutoFocused && root.bandPillsVisible) {
               root.bandAutoFocused = false
-            } else {
-              root.focusSection = "dns"
+            } else if (root.wifiNetworks.length > 0) {
+              root.focusSection = "wifi"
+              if (root.selectedIndex < 0) root.selectedIndex = 0
             }
-          } else if (root.focusSection === "dns") {
-            // k from DNS moves up into the band section when it's on screen,
-            // then the disconnect button; otherwise stays put. j drops into the
-            // wifi list if there's anywhere to land.
-            if (dy < 0) {
+          } else {  // wifi
+            if (dy < 0 && root.selectedIndex <= 0) {
               if (root.canSelectBand) {
                 root.focusSection = "band"
                 root.bandAutoFocused = !root.bandPillsVisible
@@ -864,24 +819,15 @@ Panel {
                 root.focusSection = "header"
                 root.headerIndex = 0
               }
-            } else if (root.wifiNetworks.length > 0) {
-              root.focusSection = "wifi"
-              if (root.selectedIndex < 0) root.selectedIndex = 0
-            }
-          } else {  // wifi
-            // k from the top row escapes back up to the DNS row rather than
-            // wrapping around to the bottom of the list.
-            if (dy < 0 && root.selectedIndex <= 0) {
-              root.focusSection = "dns"
               root.wifiActionFocused = false
+            } else {
+              root.selectByDelta(dy)
             }
-            else root.selectByDelta(dy)
           }
         }
         if (dx !== 0) {
           if (root.focusSection === "header") root.selectHeaderByDelta(dx)
           else if (root.focusSection === "band") { if (!root.bandAutoFocused) root.selectBandByDelta(dx) }
-          else if (root.focusSection === "dns") root.selectDnsByDelta(dx)
           else if (root.focusSection === "wifi") root.selectWifiActionByDelta(dx)
         }
       }
@@ -889,7 +835,6 @@ Panel {
         if (root.cursorActive) {
           if (root.focusSection === "header") root.activateHeader()
           else if (root.focusSection === "band") root.activateBand()
-          else if (root.focusSection === "dns") root.activateDns()
           else root.activateSelected()
         }
       }
@@ -1201,64 +1146,6 @@ Panel {
 
       }
 
-      // DNS provider selection.
-      PanelSeparator {
-        foreground: root.bar.foreground
-      }
-
-      Column {
-        width: parent.width
-        spacing: Style.space(10)
-
-        PanelSectionHeader {
-          text: "DNS PROVIDER"
-          foreground: root.bar.foreground
-          fontFamily: root.bar.fontFamily
-        }
-
-        Row {
-          id: dnsRow
-          width: parent.width
-          spacing: Style.space(6)
-
-          readonly property int count: 4
-          readonly property real cellWidth: (width - spacing * (count - 1)) / count
-
-          DnsProviderPill {
-            provider: "DHCP"
-            index: 0
-            tooltipText: "Use DNS from DHCP"
-            width: dnsRow.cellWidth
-            onClicked: root.setDns(provider)
-          }
-
-          DnsProviderPill {
-            provider: "Cloudflare"
-            index: 1
-            tooltipText: "Set DNS to Cloudflare"
-            width: dnsRow.cellWidth
-            onClicked: root.setDns(provider)
-          }
-
-          DnsProviderPill {
-            provider: "Google"
-            index: 2
-            tooltipText: "Set DNS to Google"
-            width: dnsRow.cellWidth
-            onClicked: root.setDns(provider)
-          }
-
-          DnsProviderPill {
-            provider: "Custom"
-            index: 3
-            tooltipText: "Set custom DNS servers"
-            width: dnsRow.cellWidth
-            onClicked: root.setDns(provider)
-          }
-        }
-      }
-
-
       // Wi-Fi networks (only if a Wi-Fi station is available).
       PanelSeparator {
         visible: root.wifiStationAvailable && networkList.count > 0
@@ -1351,36 +1238,6 @@ Panel {
       root.cursorActive = true
       root.focusSection = "band"
       root.bandIndex = pill.slot
-    }
-  }
-
-  // One DNS provider pill. The cursor + current visuals come entirely from
-  // CursorSurface; this component just binds them to the panel's cursor
-  // state and renders the label/tooltip/click target.
-  component DnsProviderPill: Button {
-    id: pill
-    required property string provider
-    required property int index
-
-    text: provider
-    fontSize: Style.font.bodySmall
-    foreground: root.bar.foreground
-    fontFamily: root.bar.fontFamily
-    horizontalPadding: Style.spacing.controlPaddingX
-    verticalPadding: Style.spacing.controlPaddingY + Style.space(2)
-    bordered: true
-
-    // Map the panel's domain semantics onto Button's structural props:
-    // `current DNS` is the pill's `active` fill; the keyboard cursor lights
-    // up `hasCursor`.
-    active: root.dnsProvider === provider
-    hasCursor: root.cursorActive && root.focusSection === "dns" && root.dnsIndex === index
-
-    onHovered: function(isHovered) {
-      if (!isHovered) return
-      root.cursorActive = true
-      root.focusSection = "dns"
-      root.dnsIndex = pill.index
     }
   }
 
@@ -1742,7 +1599,7 @@ Panel {
           anchors.fill: parent
           horizontalAlignment: Text.AlignHCenter
           verticalAlignment: Text.AlignVCenter
-          text: row.isFailed ? "Wrong password" : "Connecting..."
+          text: row.isFailed ? (root.failureReason !== "" ? root.failureReason : "Connection failed") : "Connecting..."
           color: row.isFailed ? root.bar.urgent : root.bar.foreground
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.bodySmall

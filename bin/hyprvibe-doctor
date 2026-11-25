@@ -1,0 +1,275 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# hyprvibe-doctor: Strictly read-only diagnostic health checker for HyprVibe.
+# Checks symlinks, runtime packages, file permissions, repo cleanliness, and syntax
+# without modifying any project files or system state.
+
+REAL_SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd -- "$(dirname -- "$REAL_SCRIPT")" && pwd)"
+REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+
+TARGET_HOME=""
+SDDM_DIR="/usr/share/sddm/themes/hyprvibe"
+NO_PKG_QUERY=0
+
+usage() {
+  cat <<'EOF'
+Usage: hyprvibe-doctor [OPTIONS]
+
+Read-only health check for HyprVibe dotfiles, symlinks, packages, and permissions.
+
+Options:
+  --home <dir>       Inspect a sandbox/custom home directory instead of $HOME
+  --sddm-dir <dir>   Inspect a custom SDDM theme directory
+  --repo <dir>       Specify HyprVibe repository root
+  --no-pkg-query     Skip pacman/binary package availability checks
+  -h, --help         Show this help message
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --home)
+      TARGET_HOME="${2:-}"
+      shift 2
+      ;;
+    --sddm-dir)
+      SDDM_DIR="${2:-}"
+      shift 2
+      ;;
+    --repo)
+      REPO_ROOT="${2:-}"
+      shift 2
+      ;;
+    --no-pkg-query)
+      NO_PKG_QUERY=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ -z "$TARGET_HOME" ]]; then
+  TARGET_HOME="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6 || true)"
+  [[ -z "$TARGET_HOME" ]] && TARGET_HOME="$HOME"
+fi
+
+C_RESET="" C_BOLD="" C_GREEN="" C_YELLOW="" C_RED="" C_CYAN=""
+if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+  C_RESET=$'\033[0m'
+  C_BOLD=$'\033[1m'
+  C_GREEN=$'\033[32m'
+  C_YELLOW=$'\033[33m'
+  C_RED=$'\033[31m'
+  C_CYAN=$'\033[36m'
+fi
+
+OK_COUNT=0
+WARN_COUNT=0
+FAIL_COUNT=0
+
+section() { printf "\n%s%s==> %s%s\n" "$C_BOLD" "$C_CYAN" "$1" "$C_RESET"; }
+ok()      { printf "%s[OK]%s   %s\n" "$C_GREEN" "$C_RESET" "$1"; ((OK_COUNT++)) || true; }
+warn()    { printf "%s[WARN]%s %s\n" "$C_YELLOW" "$C_RESET" "$1"; ((WARN_COUNT++)) || true; }
+fail()    { printf "%s[FAIL]%s %s\n" "$C_RED" "$C_RESET" "$1"; ((FAIL_COUNT++)) || true; }
+
+check_repo() {
+  section "Repository & Git Hygiene"
+  if [[ ! -d "$REPO_ROOT/.git" ]]; then
+    fail "Repository missing .git at $REPO_ROOT"
+    return
+  fi
+  ok "Repository present at $REPO_ROOT"
+
+  local dirty
+  dirty="$(git -C "$REPO_ROOT" status --porcelain=v1 --untracked-files=no 2>/dev/null || true)"
+  if [[ -z "$dirty" ]]; then
+    ok "No modified tracked files in git"
+  else
+    warn "Modified tracked file(s) in repo (can block git pull --rebase):"
+    while IFS= read -r line; do
+      printf "       %s\n" "$line"
+    done <<< "$dirty"
+  fi
+}
+
+check_symlink_target() {
+  local link_path="$1"
+  local label="$2"
+  local required="${3:-0}"
+
+  if [[ -L "$link_path" ]]; then
+    if [[ -e "$link_path" ]]; then
+      ok "$label -> $(readlink "$link_path")"
+    else
+      fail "BROKEN symlink: $link_path -> $(readlink "$link_path")"
+    fi
+  elif [[ -e "$link_path" ]]; then
+    warn "$label exists as a regular path (not stowed symlink): $link_path"
+  else
+    if (( required == 1 )); then
+      warn "$label not installed yet: $link_path"
+    fi
+  fi
+}
+
+check_symlinks_and_state() {
+  section "Symlinks & Runtime State ($TARGET_HOME)"
+
+  local cfg_dirs=(
+    hypr nvim foot tmux btop dunst gtk-3.0 gtk-4.0
+    madsnake mpd mpv ohmyposh quickshell rmpc rofi Thunar
+  )
+  local d
+  for d in "${cfg_dirs[@]}"; do
+    local p="${TARGET_HOME}/.config/${d}"
+    if [[ -L "$p" || -e "$p" ]]; then
+      check_symlink_target "$p" "~/.config/$d" 1
+    else
+      warn "~/.config/$d not present in $TARGET_HOME"
+    fi
+  done
+
+  check_symlink_target "${TARGET_HOME}/.zshrc" "~/.zshrc" 1
+  check_symlink_target "${TARGET_HOME}/.gtkrc-2.0" "~/.gtkrc-2.0" 1
+  check_symlink_target "${TARGET_HOME}/.local/bin/btop" "~/.local/bin/btop" 1
+
+  # Check any broken symlinks in .config / .local/bin cleanly (HyprVibe-related -> FAIL; unrelated -> WARN)
+  local broken_link
+  while IFS= read -r -d '' broken_link; do
+    case "$broken_link" in
+      "${TARGET_HOME}/.config/"*)
+        local parent_base
+        parent_base="${broken_link#${TARGET_HOME}/.config/}"
+        if [[ "$parent_base" != */* ]]; then
+          continue
+        fi
+        ;;
+    esac
+    local target_dest
+    target_dest="$(readlink "$broken_link" 2>/dev/null || true)"
+    if [[ "$target_dest" == *HyprVibe* || "$broken_link" == */hyprvibe* ]]; then
+      fail "BROKEN HyprVibe symlink: $broken_link -> $target_dest"
+    else
+      warn "Broken third-party symlink: $broken_link -> $target_dest"
+    fi
+  done < <(find "${TARGET_HOME}/.config" "${TARGET_HOME}/.local/bin" -maxdepth 3 -type l ! -exec test -e {} \; -print0 2>/dev/null)
+
+  local state_dir="${TARGET_HOME}/.local/state/hyprvibe/current"
+  if [[ -d "$state_dir" ]]; then
+    local f missing_state=0
+    for f in theme.name colors.toml hyprland.lua dunst.conf gtk.css shell.toml; do
+      if [[ ! -f "${state_dir}/${f}" ]]; then
+        warn "Missing rendered theme state file: ${state_dir}/${f}"
+        missing_state=1
+      fi
+    done
+    if (( missing_state == 0 )); then
+      ok "Rendered theme state files present in $state_dir"
+    fi
+  else
+    warn "Theme state dir not initialized: $state_dir"
+  fi
+}
+
+check_packages() {
+  section "Runtime Dependencies"
+  if (( NO_PKG_QUERY == 1 )); then
+    ok "Package checks skipped (--no-pkg-query)"
+    return
+  fi
+
+  local -a required_cmds=(
+    Hyprland quickshell hyprlock hypridle hyprsunset
+    awww dunst rofi foot tmux nvim zsh stow jq
+    grim slurp wl-copy cliphist playerctl wpctl iw zenity
+    inotifywait edid-decode luac
+  )
+  local cmd
+  for cmd in "${required_cmds[@]}"; do
+    if command -v "$cmd" >/dev/null 2>&1; then
+      ok "Command available: $cmd"
+    else
+      warn "Missing runtime command: $cmd"
+    fi
+  done
+
+  if command -v pacman >/dev/null 2>&1; then
+    local pkg
+    for pkg in python-dbus python-gobject inotify-tools wireless_tools; do
+      if pacman -Q "$pkg" >/dev/null 2>&1; then
+        ok "Package installed: $pkg"
+      else
+        warn "Package missing: $pkg"
+      fi
+    done
+  fi
+}
+
+check_permissions() {
+  section "Permissions & Security"
+
+  local exec_fail=0
+  local f
+  while IFS= read -r -d '' f; do
+    local head_line
+    head_line="$(head -n 1 "$f" 2>/dev/null || true)"
+    [[ "$head_line" == \#!* ]] || continue
+    if [[ ! -x "$f" ]]; then
+      fail "Script missing executable (+x) bit: $f"
+      exec_fail=1
+    fi
+  done < <(find "$REPO_ROOT/bin" "$REPO_ROOT/dotfiles/hypr/.config/hypr/scripts" "$REPO_ROOT/dotfiles/quickshell/.local/bin" "$REPO_ROOT/plugins" -path "$REPO_ROOT/bin/lib" -prune -o -type f -print0 2>/dev/null)
+  if (( exec_fail == 0 )); then
+    ok "All shebang scripts have executable (+x) permissions"
+  fi
+
+  if [[ -d "$SDDM_DIR" ]]; then
+    local qml
+    while IFS= read -r -d '' qml; do
+      local mode owner
+      mode="$(stat -c '%a' "$qml" 2>/dev/null || true)"
+      owner="$(stat -c '%U' "$qml" 2>/dev/null || true)"
+      if [[ -w "$qml" && "$(id -u)" -ne 0 ]] || (( (8#${mode:-0} & 0022) != 0 )); then
+        fail "Security risk: SDDM greeter code $qml is user/group-writable (owner=$owner mode=$mode); keep QML root-owned 644"
+      else
+        ok "SDDM QML read-only protection OK: $qml ($owner:$mode)"
+      fi
+    done < <(find "$SDDM_DIR" -maxdepth 2 -type f -name '*.qml' -print0 2>/dev/null)
+  else
+    ok "System SDDM theme directory not present at $SDDM_DIR (skipping greeter perm check)"
+  fi
+
+  local ssh_dir="${TARGET_HOME}/.ssh"
+  if [[ -d "$ssh_dir" ]]; then
+    local ssh_mode
+    ssh_mode="$(stat -c '%a' "$ssh_dir" 2>/dev/null || true)"
+    if [[ "$ssh_mode" == "700" ]]; then
+      ok "~/.ssh directory permissions secure (700)"
+    else
+      warn "~/.ssh permissions are $ssh_mode (recommended: 700)"
+    fi
+  fi
+}
+
+main() {
+  printf "%sHyprVibe Doctor (Read-Only Diagnostic)%s\n" "$C_BOLD" "$C_RESET"
+  check_repo
+  check_symlinks_and_state
+  check_packages
+  check_permissions
+
+  printf "\n%sSummary:%s OK=%d  WARN=%d  FAIL=%d\n" "$C_BOLD" "$C_RESET" "$OK_COUNT" "$WARN_COUNT" "$FAIL_COUNT"
+  (( FAIL_COUNT == 0 ))
+}
+
+main "$@"

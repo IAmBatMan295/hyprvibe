@@ -7,6 +7,7 @@ Item {
     z: popup.visible ? 90 : 5
 
     property var model: sessionModel
+    property int selectedIndex: -1
 
     function getSessionName(idx) {
         if (!model || idx < 0 || idx >= model.rowCount()) return "Hyprland"
@@ -19,26 +20,38 @@ Item {
         return model.rowCount() - 1 - visualIdx
     }
 
-    property int currentIndex: {
+    function resolveDefaultIndex() {
         if (!model || model.rowCount() === 0) return 0
-        // Prefer uwsm hyprland session
+        // Honor SDDM RememberLastSession state when a valid saved index is provided
+        if (model.lastIndex !== undefined && model.lastIndex >= 0 && model.lastIndex < model.rowCount())
+            return model.lastIndex
+        // Otherwise prefer uwsm hyprland session, then any hyprland session
         for (var i = 0; i < model.rowCount(); i++) {
             var sName = getSessionName(i).toLowerCase()
             if (sName.indexOf("uwsm") !== -1 && sName.indexOf("hyprland") !== -1)
                 return i
         }
-        // Fallback to any hyprland session
         for (var j = 0; j < model.rowCount(); j++) {
             var name = getSessionName(j).toLowerCase()
             if (name.indexOf("hyprland") !== -1)
                 return j
         }
-        if (model.lastIndex !== undefined && model.lastIndex >= 0 && model.lastIndex < model.rowCount())
-            return model.lastIndex
         return 0
     }
 
+    readonly property int currentIndex: (selectedIndex >= 0 && model && selectedIndex < model.rowCount())
+        ? selectedIndex
+        : resolveDefaultIndex()
+
     readonly property string currentSessionName: getSessionName(currentIndex)
+
+    function scrollToSelected() {
+        if (!model || model.rowCount() === 0) return
+        var visualIdx = model.rowCount() - 1 - root.currentIndex
+        if (visualIdx >= 0 && visualIdx < sessionList.count) {
+            sessionList.positionViewAtIndex(visualIdx, ListView.Contain)
+        }
+    }
 
     readonly property bool isOpen: popup.visible
     function toggle() { popup.visible = !popup.visible }
@@ -102,6 +115,9 @@ Item {
     Rectangle {
         id: popup
         visible: false
+        onVisibleChanged: {
+            if (visible) Qt.callLater(root.scrollToSelected)
+        }
         width: parent.width
         height: Math.min(Math.max(1, (root.model ? root.model.rowCount() : 1)) * 38 + 2, 180)
         anchors.bottom: headerBox.top
@@ -162,7 +178,7 @@ Item {
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
-                        root.currentIndex = modelIdx
+                        root.selectedIndex = modelIdx
                         root.close()
                     }
                 }

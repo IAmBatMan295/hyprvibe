@@ -10,12 +10,27 @@ PIDFILE="$STATE_DIR/wf-recorder.pid"
 LOGFILE="$STATE_DIR/wf-recorder.log"
 
 # Check if recording is active (running state)
-if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-    # RUNNING STATE -> CLOSED STATE: Stop recording
-    kill -SIGINT "$(cat "$PIDFILE")" 2>/dev/null
+if [ -f "$PIDFILE" ]; then
+    REC_PID=$(cat "$PIDFILE" 2>/dev/null || true)
+    if [ -n "$REC_PID" ] && kill -0 "$REC_PID" 2>/dev/null; then
+        # RUNNING STATE -> CLOSED STATE: Stop recording and wait for clean container flush
+        kill -SIGINT "$REC_PID" 2>/dev/null || true
+        for _ in {1..50}; do
+            kill -0 "$REC_PID" 2>/dev/null || break
+            sleep 0.1
+        done
+        if kill -0 "$REC_PID" 2>/dev/null; then
+            kill -SIGTERM "$REC_PID" 2>/dev/null || true
+            for _ in {1..20}; do
+                kill -0 "$REC_PID" 2>/dev/null || break
+                sleep 0.05
+            done
+        fi
+        rm -f "$PIDFILE"
+        notify-send "Recording Stopped" "Saved to $RECORDINGS_DIR" -t 3000
+        exit 0
+    fi
     rm -f "$PIDFILE"
-    notify-send "Recording Stopped" "Saved to $RECORDINGS_DIR" -t 3000
-    exit 0
 fi
 
 # CLOSED STATE -> RUNNING STATE: Show menu and start recording
@@ -42,6 +57,22 @@ selected=$(printf '%s\n' "${profiles[@]}" | rofi -dmenu -i -p "Screen Record" -t
 # Exit if nothing selected (Escape pressed)
 [ -z "$selected" ] && exit 0
 
+# Detect focused monitor output and height dynamically
+FOCUSED_OUTPUT=""
+MON_HEIGHT=""
+if command -v hyprctl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+    MON_JSON=$(hyprctl monitors -j 2>/dev/null || true)
+    IFS=$'\t' read -r FOCUSED_OUTPUT MON_HEIGHT < <(
+        printf '%s' "$MON_JSON" | jq -r '
+            (([.[] | select(.focused == true)] | .[0]) // .[0] // empty)
+            | [(.name // ""), (.height // "")]
+            | @tsv
+        ' 2>/dev/null || true
+    )
+fi
+RES_TAG="${MON_HEIGHT:+${MON_HEIGHT}p}"
+RES_TAG="${RES_TAG:-display}"
+
 # Parse selection
 case "$selected" in
     "30fps • 256kbps")
@@ -50,7 +81,7 @@ case "$selected" in
         AUDIO_BITRATE="256k"
         NO_AUDIO=false
         EXT="mp4"
-        LABEL="30fps-1080p-256kbps"
+        MODE_TAG="256kbps"
         ;;
     "30fps • Lossless")
         FPS=30
@@ -58,13 +89,13 @@ case "$selected" in
         AUDIO_BITRATE=""
         NO_AUDIO=false
         EXT="mkv"
-        LABEL="30fps-1080p-lossless"
+        MODE_TAG="lossless"
         ;;
     "30fps • No Audio")
         FPS=30
         NO_AUDIO=true
         EXT="mp4"
-        LABEL="30fps-1080p-no-audio"
+        MODE_TAG="no-audio"
         ;;
     "60fps • 256kbps")
         FPS=60
@@ -72,7 +103,7 @@ case "$selected" in
         AUDIO_BITRATE="256k"
         NO_AUDIO=false
         EXT="mp4"
-        LABEL="60fps-1080p-256kbps"
+        MODE_TAG="256kbps"
         ;;
     "60fps • Lossless")
         FPS=60
@@ -80,42 +111,52 @@ case "$selected" in
         AUDIO_BITRATE=""
         NO_AUDIO=false
         EXT="mkv"
-        LABEL="60fps-1080p-lossless"
+        MODE_TAG="lossless"
         ;;
     "60fps • No Audio")
         FPS=60
         NO_AUDIO=true
         EXT="mp4"
-        LABEL="60fps-1080p-no-audio"
+        MODE_TAG="no-audio"
         ;;
     *)
         exit 1
         ;;
 esac
 
+LABEL="${FPS}fps-${RES_TAG}-${MODE_TAG}"
+
 # Generate filename with timestamp
 FILENAME="recording-$(date +%Y-%m-%d_%H-%M-%S).$EXT"
 OUTPUT="$RECORDINGS_DIR/$FILENAME"
 
 detect_encoder() {
-    local render_node
-    render_node="${RENDER_DEV:-$(find /dev/dri -name "renderD*" 2>/dev/null | sort | head -n 1 || true)}"
+    local dri_dir="${DRI_DIR:-/dev/dri}"
+    local -a candidates=()
+    local node
 
-    # Check VAAPI (AMD / Intel)
-    if [[ -n "$render_node" && -e "$render_node" ]]; then
-        if command -v vainfo >/dev/null 2>&1 && vainfo >/dev/null 2>&1; then
-            echo "h264_vaapi nv12"
-            return 0
-        elif ffmpeg -init_hw_device vaapi=va:"$render_node" -f lavfi -i nullsrc=s=256x256:d=0.01 -vf 'format=nv12,hwupload' -c:v h264_vaapi -f null - >/dev/null 2>&1; then
-            echo "h264_vaapi nv12"
-            return 0
-        fi
+    if [[ -n "${RENDER_DEV:-}" && -e "${RENDER_DEV}" ]]; then
+        candidates=("${RENDER_DEV}")
+    elif [[ -d "$dri_dir" ]]; then
+        while IFS= read -r -d '' node; do
+            candidates+=("$node")
+        done < <(find "$dri_dir" -maxdepth 1 -name "renderD*" -print0 2>/dev/null | sort -z)
     fi
 
-    # Check NVENC (Nvidia)
-    if command -v nvidia-smi >/dev/null 2>&1 && ffmpeg -encoders 2>/dev/null | grep -q "h264_nvenc"; then
-        echo "h264_nvenc yuv420p"
-        return 0
+    # Probe actual H.264 VAAPI encoding via ffmpeg (catches decode-only GPUs & hybrid cards)
+    if command -v ffmpeg >/dev/null 2>&1; then
+        for node in "${candidates[@]}"; do
+            if ffmpeg -init_hw_device "vaapi=va:${node}" -f lavfi -i nullsrc=s=256x256:d=0.01 -vf 'format=nv12,hwupload' -c:v h264_vaapi -f null - >/dev/null 2>&1; then
+                echo "h264_vaapi nv12 ${node}"
+                return 0
+            fi
+        done
+
+        # Check NVENC (Nvidia)
+        if command -v nvidia-smi >/dev/null 2>&1 && ffmpeg -encoders 2>/dev/null | grep -q "h264_nvenc"; then
+            echo "h264_nvenc yuv420p"
+            return 0
+        fi
     fi
 
     # Software fallback
@@ -147,22 +188,27 @@ if [ "$NO_AUDIO" != true ]; then
 fi
 
 # Detect encoder and configure params
-read -r VIDEO_CODEC PIX_FMT < <(detect_encoder || true)
+read -r VIDEO_CODEC PIX_FMT DETECTED_RENDER_DEV < <(detect_encoder || true)
 
 if [[ "$VIDEO_CODEC" == "libx264" ]]; then
     notify-send "Screen Record" "Hardware encoder unavailable. Using software encoding (libx264)" -t 3000
 fi
 
-RENDER_DEV="${RENDER_DEV:-$(find /dev/dri -name "renderD*" 2>/dev/null | sort | head -n 1 || true)}"
 CODEC_PARAMS=("-p" "pix_fmt=$PIX_FMT" "-p" "b=$BITRATE" "-p" "g=$GOP")
-if [[ "$VIDEO_CODEC" == "h264_vaapi" && -n "$RENDER_DEV" && -e "$RENDER_DEV" ]]; then
-    CODEC_PARAMS+=("-d" "$RENDER_DEV")
+if [[ "$VIDEO_CODEC" == "h264_vaapi" && -n "${DETECTED_RENDER_DEV:-}" && -e "${DETECTED_RENDER_DEV}" ]]; then
+    CODEC_PARAMS+=("-d" "$DETECTED_RENDER_DEV")
+fi
+
+OUTPUT_PARAMS=()
+if [[ -n "$FOCUSED_OUTPUT" ]]; then
+    OUTPUT_PARAMS=("-o" "$FOCUSED_OUTPUT")
 fi
 
 # Start recording in background
 nohup wf-recorder \
     --codec="$VIDEO_CODEC" \
     -r "$FPS" \
+    "${OUTPUT_PARAMS[@]}" \
     "${AUDIO_PARAMS[@]}" \
     "${CODEC_PARAMS[@]}" \
     -f "$OUTPUT" > "$LOGFILE" 2>&1 &

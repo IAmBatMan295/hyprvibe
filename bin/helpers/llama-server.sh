@@ -10,55 +10,25 @@ HELPER_TITLE="Local LLM Server"
 HELPER_ICON="󰧑"
 HELPER_ORDER=22
 
-# ------------------------------------------------------------------------------
-# Floating Window Spawn Logic (45% screen width x 48% height, centered)
-# ------------------------------------------------------------------------------
-IS_INNER=false
-for a in "$@"; do
-    case "$a" in
-        --inner|--headless|--status|--dry-run-cmd|--list-models|--start|--stop|--restart)
-            IS_INNER=true
-            ;;
-    esac
-done
+REAL_SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
+ROOT_DIR="$(cd -- "$(dirname -- "${REAL_SCRIPT}")/../.." && pwd)"
+# shellcheck source=../lib/helper-ui.sh
+source "${ROOT_DIR}/bin/lib/helper-ui.sh"
 
-if [[ "$IS_INNER" == "false" ]]; then
-    SCRIPT_FILE=$(readlink -f "$0")
-
-    MON_INFO=$(hyprctl monitors -j 2>/dev/null || true)
-    WIDTH=$(echo "$MON_INFO" | jq -r '.[] | select(.focused == true) | .width // empty' 2>/dev/null || true)
-    if [[ -z "$WIDTH" ]]; then
-        WIDTH=$(echo "$MON_INFO" | jq -r '.[0].width // 1920' 2>/dev/null || true)
-        HEIGHT=$(echo "$MON_INFO" | jq -r '.[0].height // 1080' 2>/dev/null || true)
-        SCALE=$(echo "$MON_INFO" | jq -r '.[0].scale // 1.0' 2>/dev/null || true)
-    else
-        HEIGHT=$(echo "$MON_INFO" | jq -r '.[] | select(.focused == true) | .height // 1080' 2>/dev/null || true)
-        SCALE=$(echo "$MON_INFO" | jq -r '.[] | select(.focused == true) | .scale // 1.0' 2>/dev/null || true)
-    fi
-
-    TARGET_W=$(awk -v w="$WIDTH" -v s="$SCALE" 'BEGIN { printf "%d", (w / s) * 0.45 }')
-    TARGET_H=$(awk -v h="$HEIGHT" -v s="$SCALE" 'BEGIN { printf "%d", (h / s) * 0.48 }')
-    [[ "$TARGET_W" -lt 640 ]] && TARGET_W=640
-    [[ "$TARGET_H" -lt 400 ]] && TARGET_H=400
-
-    if command -v hyprctl >/dev/null 2>&1 && pgrep -x Hyprland >/dev/null 2>&1; then
-        hyprctl eval "hl.window_rule({ match = { class = 'llama-server-helper' }, float = true, center = true, size = '${TARGET_W} ${TARGET_H}' })" >/dev/null 2>&1 || true
-        hyprctl eval "hl.exec_cmd('foot -a llama-server-helper -T \"${HELPER_TITLE}\" -w ${TARGET_W}x${TARGET_H} bash \"${SCRIPT_FILE}\" --inner \"$@\"')" >/dev/null 2>&1 || true
-        exit 0
-    fi
-fi
+helper_maybe_spawn_window "$0" 0.45 0.48 640 400 "--inner --headless --status --list-models --models-dir --model --dry-run-cmd --start --stop --restart" "$@"
 
 # ------------------------------------------------------------------------------
-# State & Configuration Paths
+# State & Configuration Paths (Read-only Stow defaults; mutable edits in XDG_STATE_HOME)
 # ------------------------------------------------------------------------------
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/llama-server"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/hyprvibe/llama-server"
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/llama-server"
-CONFIG_FILE="${CONFIG_DIR}/llama-server.conf"
+DEFAULT_CONFIG_FILE="${CONFIG_DIR}/llama-server.conf"
+CONFIG_FILE="${STATE_DIR}/config.conf"
 PID_FILE="${STATE_DIR}/llama-server.pid"
-LOG_FILE="${HOME}/llama-server.log"
+LOG_FILE="${STATE_DIR}/server.log"
 CURRENT_INFO_FILE="${STATE_DIR}/llama-server.current"
 
-mkdir -p "$STATE_DIR" "$CONFIG_DIR"
+mkdir -p "$STATE_DIR"
 
 MODELS_DIR="${HOME}/models"
 GPU_LAYERS=99
@@ -70,11 +40,41 @@ PORT=8080
 HOST="127.0.0.1"
 LAST_MODEL=""
 
-# Load persisted configuration if available
+# Load tracked defaults first, then user overrides from ~/.local/state
+if [[ -f "$DEFAULT_CONFIG_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$DEFAULT_CONFIG_FILE" 2>/dev/null || true
+fi
 if [[ -f "$CONFIG_FILE" ]]; then
     # shellcheck disable=SC1090
     source "$CONFIG_FILE" 2>/dev/null || true
 fi
+MODELS_DIR="${MODELS_DIR/#\~/$HOME}"
+LAST_MODEL="${LAST_MODEL/#\~/$HOME}"
+
+check_vram_hint() {
+    local model_path="$1"
+    [[ -f "$model_path" ]] || return 0
+    local model_mb
+    model_mb=$(( $(stat -c%s "$model_path" 2>/dev/null || echo 0) / 1048576 ))
+    (( model_mb > 0 )) || return 0
+
+    local avail_vram_mb=0 drm_vram
+    for drm_vram in /sys/class/drm/card*/device/mem_info_vram_total; do
+        if [[ -r "$drm_vram" ]]; then
+            local bytes
+            bytes="$(cat "$drm_vram" 2>/dev/null || echo 0)"
+            if [[ "$bytes" =~ ^[0-9]+$ ]]; then
+                local mb=$(( bytes / 1048576 ))
+                (( mb > avail_vram_mb )) && avail_vram_mb="$mb"
+            fi
+        fi
+    done
+
+    if (( avail_vram_mb > 0 && model_mb > avail_vram_mb )); then
+        echo -e "  ${CLR_YELLOW}Note: Model (${model_mb} MiB) exceeds dedicated VRAM (${avail_vram_mb} MiB); partial CPU offload may occur.${CLR_RESET}"
+    fi
+}
 
 # ------------------------------------------------------------------------------
 # Model Discovery & Heuristics
@@ -199,6 +199,11 @@ start_server() {
     local alias
     alias=$(get_model_alias "$model")
 
+    if ! command -v llama-server >/dev/null 2>&1; then
+        echo "  ❌ Error: 'llama-server' binary not found in PATH." >&2
+        return 1
+    fi
+
     if is_running; then
         echo "  Server already running (PID: $(get_server_pid)). Stop or restart first."
         return 1
@@ -213,9 +218,9 @@ start_server() {
     echo "  Model:   $(basename "$model") (Alias: $alias)"
     echo "  Context: $ctx | GPU Layers: $layers | KV: $CTK/$CTV"
     echo "  Listen:  http://${host}:${port}"
+    check_vram_hint "$model"
 
     # Launch daemon in background with setsid to detach from session process group
-    # shellcheck disable=SC2086
     setsid -f llama-server \
         -m "$model" \
         -ngl "$layers" \
@@ -332,13 +337,19 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --models-dir)
-            MODELS_DIR="$2"
-            TARGET_MODELS_DIR_ARG="$2"
+            [[ $# -ge 2 && "$2" != --* ]] || { echo "Error: --models-dir requires a path" >&2; exit 1; }
+            MODELS_DIR="${2/#\~/$HOME}"
+            TARGET_MODELS_DIR_ARG="$MODELS_DIR"
             shift 2
             ;;
         --model)
-            TARGET_MODEL_ARG="$2"
+            [[ $# -ge 2 && "$2" != --* ]] || { echo "Error: --model requires a path" >&2; exit 1; }
+            TARGET_MODEL_ARG="${2/#\~/$HOME}"
             shift 2
+            ;;
+        --headless)
+            HELPER_HEADLESS=true
+            shift
             ;;
         --dry-run-cmd)
             ACTION="dry-run-cmd"
@@ -428,16 +439,8 @@ fi
 # ------------------------------------------------------------------------------
 # UI Helpers
 # ------------------------------------------------------------------------------
-CLR_RESET="\033[0m"
-CLR_BOLD="\033[1m"
-CLR_GREEN="\033[32m"
-CLR_RED="\033[31m"
-CLR_YELLOW="\033[33m"
-CLR_CYAN="\033[36m"
-CLR_GRAY="\033[90m"
-
 print_header() {
-    clear
+    clear 2>/dev/null || true
     echo ""
     echo -e "  ${CLR_BOLD}${CLR_CYAN}${HELPER_ICON}  ${HELPER_TITLE}${CLR_RESET}"
     echo -e "  ${CLR_GRAY}──────────────────────────────────────────────────${CLR_RESET}"
@@ -450,12 +453,14 @@ print_header() {
         local cur_port="$PORT"
         local cur_host="$HOST"
         if [[ -f "$CURRENT_INFO_FILE" ]]; then
-            # shellcheck disable=SC1090
-            source "$CURRENT_INFO_FILE" 2>/dev/null || true
-            cur_model="$(basename "${MODEL:-Unknown}")"
-            cur_ctx="${CTX:-$CTX_SIZE}"
-            cur_port="${PORT:-$PORT}"
-            cur_host="${HOST:-$HOST}"
+            local info_vals=""
+            info_vals="$(
+                MODEL="" CTX="$CTX_SIZE" PORT="$PORT" HOST="$HOST"
+                # shellcheck disable=SC1090
+                source "$CURRENT_INFO_FILE" 2>/dev/null || true
+                printf '%s\t%s\t%s\t%s' "$(basename "${MODEL:-Unknown}")" "${CTX:-$CTX_SIZE}" "${PORT:-$PORT}" "${HOST:-$HOST}"
+            )"
+            IFS=$'\t' read -r cur_model cur_ctx cur_port cur_host <<<"$info_vals"
         fi
         echo -e "  Status:  ${CLR_GREEN}${CLR_BOLD}● RUNNING${CLR_RESET} (PID: ${pid})"
         echo -e "  Model:   ${cur_model}"
@@ -529,7 +534,7 @@ settings_menu() {
         echo "    6) KV Quantization:  Key: ${CTK} / Value: ${CTV}"
         echo "    b) Back to Main Menu"
         echo ""
-        read -rp "  Change option [1-6, b]: " s_choice
+        read -rp "  Change option [1-6, b]: " s_choice || break
         case "$s_choice" in
             1)
                 echo ""
@@ -539,33 +544,54 @@ settings_menu() {
                 echo "    3) 16384 (16K - Balanced VRAM)"
                 echo "    4) 8192  (8K - Low Memory)"
                 echo "    5) Custom value"
-                read -rp "  Choice [1-5]: " c_choice
+                read -rp "  Choice [1-5]: " c_choice || break
                 case "$c_choice" in
                     1) CTX_SIZE=65536 ;;
                     2) CTX_SIZE=32768 ;;
                     3) CTX_SIZE=16384 ;;
                     4) CTX_SIZE=8192 ;;
                     5)
-                        read -rp "  Enter custom context size (e.g. 65536): " cust
-                        [[ "$cust" =~ ^[0-9]+$ ]] && CTX_SIZE="$cust"
+                        read -rp "  Enter custom context size (e.g. 65536): " cust || true
+                        if [[ "$cust" =~ ^[1-9][0-9]*$ ]]; then
+                            CTX_SIZE="$cust"
+                        else
+                            echo "  ❌ Invalid context size."
+                            sleep 1
+                        fi
                         ;;
                 esac
                 save_config
                 ;;
             2)
-                read -rp "  GPU layers to offload [default 99 = all]: " n_layers
-                [[ "$n_layers" =~ ^[0-9]+$ ]] && GPU_LAYERS="$n_layers"
+                read -rp "  GPU layers to offload [default 99 = all]: " n_layers || true
+                if [[ "$n_layers" =~ ^[0-9]+$ ]]; then
+                    GPU_LAYERS="$n_layers"
+                elif [[ -n "$n_layers" ]]; then
+                    echo "  ❌ Invalid layer count."
+                    sleep 1
+                fi
                 save_config
                 ;;
             3)
-                read -rp "  Server Port [default 8080]: " n_port
-                [[ "$n_port" =~ ^[0-9]+$ ]] && PORT="$n_port"
+                read -rp "  Server Port [default 8080]: " n_port || true
+                if [[ "$n_port" =~ ^[0-9]+$ ]] && (( n_port >= 1 && n_port <= 65535 )); then
+                    PORT="$n_port"
+                elif [[ -n "$n_port" ]]; then
+                    echo "  ❌ Invalid port (must be 1..65535)."
+                    sleep 1
+                fi
                 save_config
                 ;;
             4)
-                read -rp "  Models directory path: " n_dir
-                [[ -d "$n_dir" ]] && MODELS_DIR="$n_dir"
-                save_config
+                read -rp "  Models directory path: " n_dir || true
+                n_dir="${n_dir/#\~/$HOME}"
+                if [[ -d "$n_dir" ]]; then
+                    MODELS_DIR="$n_dir"
+                    save_config
+                elif [[ -n "$n_dir" ]]; then
+                    echo "  ❌ Directory does not exist: $n_dir"
+                    sleep 1
+                fi
                 ;;
             5)
                 if [[ "$FLASH_ATTN" == "on" ]]; then
@@ -607,7 +633,7 @@ while true; do
         echo "    5) Check Health / API Props"
         echo "    q) Quit"
         echo ""
-        read -rp "  Choice: " opt
+        read -rp "  Choice: " opt || exit 0
         case "$opt" in
             1)
                 echo ""
@@ -653,7 +679,7 @@ while true; do
         echo "    4) View Last Logs"
         echo "    q) Quit"
         echo ""
-        read -rp "  Choice: " opt
+        read -rp "  Choice: " opt || exit 0
         case "$opt" in
             1)
                 model_to_run="$LAST_MODEL"

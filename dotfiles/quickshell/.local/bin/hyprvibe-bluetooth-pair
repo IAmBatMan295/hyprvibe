@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 """
-hyprvibe-bluetooth-pair: Ephemeral Bluetooth Pairing Agent with stdin/stdout IPC
-Registers a temporary D-Bus agent with BlueZ, coordinates pairing prompts via stdout/stdin,
-ensures proper Link Key bonding (Bonded: yes), and exits immediately after.
+hyprvibe-bluetooth-pair: Ephemeral Bluetooth Pairing Agent with non-blocking stdin/stdout IPC.
+Uses async D-Bus callbacks + GLib.io_add_watch so timeouts never freeze the event loop.
 """
 
-import sys
 import os
 import re
-import signal
+import sys
 
 if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
     print("Usage: hyprvibe-bluetooth-pair <device-address>")
@@ -20,15 +18,14 @@ if not re.match(r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$", address):
     sys.exit(1)
 
 import dbus
-import dbus.service
 import dbus.mainloop.glib
+import dbus.service
 from gi.repository import GLib
 
 AGENT_PATH = "/org/bluez/hyprvibe/agent"
 AGENT_INTERFACE = "org.bluez.Agent1"
 AGENT_MANAGER_INTERFACE = "org.bluez.AgentManager1"
 DEVICE_INTERFACE = "org.bluez.Device1"
-ADAPTER_INTERFACE = "org.bluez.Adapter1"
 PROPERTIES_INTERFACE = "org.freedesktop.DBus.Properties"
 
 dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
@@ -36,102 +33,207 @@ bus = dbus.SystemBus()
 loop = GLib.MainLoop()
 
 pair_success = False
+pending_prompt = None
+stdin_watch_id = None
+
+
+def reject_error():
+    return dbus.exceptions.DBusException("org.bluez.Error.Rejected", name="org.bluez.Error.Rejected")
+
+
+def clear_pending_prompt():
+    global pending_prompt, stdin_watch_id
+    if stdin_watch_id is not None:
+        GLib.source_remove(stdin_watch_id)
+        stdin_watch_id = None
+    pending_prompt = None
+
+
+def await_stdin_response(prompt_line, handler, reply_cb, error_cb):
+    """Prompt Quickshell asynchronously without blocking GLib MainLoop timers."""
+    global pending_prompt, stdin_watch_id
+    clear_pending_prompt()
+    pending_prompt = (handler, reply_cb, error_cb)
+    sys.stdout.write(prompt_line + "\n")
+    sys.stdout.flush()
+
+    stdin_buf = bytearray()
+
+    def on_stdin_ready(fd, condition):
+        global pending_prompt, stdin_watch_id
+        current = pending_prompt
+        if not current:
+            clear_pending_prompt()
+            return False
+        cb, ok_cb, err_cb = current
+        if condition & (GLib.IO_HUP | GLib.IO_ERR):
+            clear_pending_prompt()
+            err_cb(reject_error())
+            return False
+        try:
+            chunk = os.read(fd, 1024)
+            if not chunk:
+                clear_pending_prompt()
+                err_cb(reject_error())
+                return False
+            stdin_buf.extend(chunk)
+            if b"\n" not in stdin_buf:
+                return True
+            line = bytes(stdin_buf).splitlines()[0].decode("utf-8", errors="replace").strip()
+            clear_pending_prompt()
+            cb(line, ok_cb, err_cb)
+        except Exception:
+            clear_pending_prompt()
+            err_cb(reject_error())
+        return False
+
+    stdin_watch_id = GLib.io_add_watch(
+        sys.stdin.fileno(),
+        GLib.IO_IN | GLib.IO_HUP | GLib.IO_ERR,
+        on_stdin_ready,
+    )
+
 
 class HyprVibeBluetoothAgent(dbus.service.Object):
     @dbus.service.method(AGENT_INTERFACE, in_signature="", out_signature="")
     def Release(self):
-        pass
+        clear_pending_prompt()
 
-    @dbus.service.method(AGENT_INTERFACE, in_signature="ou", out_signature="")
-    def RequestConfirmation(self, device, passkey):
-        sys.stdout.write(f"PROMPT confirmation {passkey:06d}\n")
-        sys.stdout.flush()
-        answer = sys.stdin.readline().strip().lower()
-        if answer in ("yes", "y", ""):
-            return
-        raise dbus.exceptions.DBusException("org.bluez.Error.Rejected", name="org.bluez.Error.Rejected")
+    @dbus.service.method(
+        AGENT_INTERFACE,
+        in_signature="ou",
+        out_signature="",
+        async_callbacks=("reply_cb", "error_cb"),
+    )
+    def RequestConfirmation(self, _device, passkey, reply_cb, error_cb):
+        def handle(line, ok_cb, err_cb):
+            if line.lower() in ("yes", "y", ""):
+                ok_cb()
+            else:
+                err_cb(reject_error())
 
-    @dbus.service.method(AGENT_INTERFACE, in_signature="o", out_signature="u")
-    def RequestPasskey(self, device):
-        sys.stdout.write("PROMPT passkey\n")
-        sys.stdout.flush()
-        line = sys.stdin.readline().strip()
-        try:
-            return dbus.UInt32(int(line))
-        except Exception:
-            raise dbus.exceptions.DBusException("org.bluez.Error.Rejected", name="org.bluez.Error.Rejected")
+        await_stdin_response(f"PROMPT confirmation {passkey:06d}", handle, reply_cb, error_cb)
 
-    @dbus.service.method(AGENT_INTERFACE, in_signature="o", out_signature="s")
-    def RequestPinCode(self, device):
-        sys.stdout.write("PROMPT pin\n")
-        sys.stdout.flush()
-        line = sys.stdin.readline().strip()
-        if line:
-            return line
-        raise dbus.exceptions.DBusException("org.bluez.Error.Rejected", name="org.bluez.Error.Rejected")
+    @dbus.service.method(
+        AGENT_INTERFACE,
+        in_signature="o",
+        out_signature="u",
+        async_callbacks=("reply_cb", "error_cb"),
+    )
+    def RequestPasskey(self, _device, reply_cb, error_cb):
+        def handle(line, ok_cb, err_cb):
+            try:
+                ok_cb(dbus.UInt32(int(line)))
+            except Exception:
+                err_cb(reject_error())
+
+        await_stdin_response("PROMPT passkey", handle, reply_cb, error_cb)
+
+    @dbus.service.method(
+        AGENT_INTERFACE,
+        in_signature="o",
+        out_signature="s",
+        async_callbacks=("reply_cb", "error_cb"),
+    )
+    def RequestPinCode(self, _device, reply_cb, error_cb):
+        def handle(line, ok_cb, err_cb):
+            if line:
+                ok_cb(line)
+            else:
+                err_cb(reject_error())
+
+        await_stdin_response("PROMPT pin", handle, reply_cb, error_cb)
 
     @dbus.service.method(AGENT_INTERFACE, in_signature="ouq", out_signature="")
-    def DisplayPasskey(self, device, passkey, entered):
+    def DisplayPasskey(self, _device, passkey, _entered):
         sys.stdout.write(f"PROMPT display {passkey:06d}\n")
         sys.stdout.flush()
 
     @dbus.service.method(AGENT_INTERFACE, in_signature="os", out_signature="")
-    def DisplayPinCode(self, device, pincode):
+    def DisplayPinCode(self, _device, pincode):
         sys.stdout.write(f"PROMPT display_pin {pincode}\n")
         sys.stdout.flush()
 
-    @dbus.service.method(AGENT_INTERFACE, in_signature="o", out_signature="")
-    def RequestAuthorization(self, device):
-        sys.stdout.write("PROMPT authorize\n")
-        sys.stdout.flush()
-        answer = sys.stdin.readline().strip().lower()
-        if answer in ("yes", "y", ""):
-            return
-        raise dbus.exceptions.DBusException("org.bluez.Error.Rejected", name="org.bluez.Error.Rejected")
+    @dbus.service.method(
+        AGENT_INTERFACE,
+        in_signature="o",
+        out_signature="",
+        async_callbacks=("reply_cb", "error_cb"),
+    )
+    def RequestAuthorization(self, _device, reply_cb, error_cb):
+        def handle(line, ok_cb, err_cb):
+            if line.lower() in ("yes", "y", ""):
+                ok_cb()
+            else:
+                err_cb(reject_error())
+
+        await_stdin_response("PROMPT authorize", handle, reply_cb, error_cb)
 
     @dbus.service.method(AGENT_INTERFACE, in_signature="os", out_signature="")
-    def AuthorizeService(self, device, uuid):
+    def AuthorizeService(self, _device, _uuid):
         return
 
     @dbus.service.method(AGENT_INTERFACE, in_signature="", out_signature="")
     def Cancel(self):
+        clear_pending_prompt()
         sys.stdout.write("PROMPT canceled\n")
         sys.stdout.flush()
+
 
 agent = HyprVibeBluetoothAgent(bus, AGENT_PATH)
 manager = dbus.Interface(bus.get_object("org.bluez", "/org/bluez"), AGENT_MANAGER_INTERFACE)
 
+
 def cleanup():
+    clear_pending_prompt()
     try:
         manager.UnregisterAgent(AGENT_PATH)
     except Exception:
         pass
 
+
 try:
     manager.RegisterAgent(AGENT_PATH, "KeyboardDisplay")
     manager.RequestDefaultAgent(AGENT_PATH)
-except Exception as e:
+except Exception:
     cleanup()
     sys.exit(1)
 
-def find_device_path(bus, address):
+
+def find_device_path(bus_conn, target_addr):
     try:
-        om = dbus.Interface(bus.get_object("org.bluez", "/"), "org.freedesktop.DBus.ObjectManager")
+        om = dbus.Interface(bus_conn.get_object("org.bluez", "/"), "org.freedesktop.DBus.ObjectManager")
         objects = om.GetManagedObjects()
-        target = address.upper()
+        target = target_addr.upper()
         for path, ifaces in objects.items():
-            dev = ifaces.get("org.bluez.Device1")
+            dev = ifaces.get(DEVICE_INTERFACE)
             if dev and str(dev.get("Address", "")).upper() == target:
                 return path
     except Exception:
         pass
-    return f"/org/bluez/hci0/dev_{address.replace(':', '_')}"
+    return f"/org/bluez/hci0/dev_{target_addr.replace(':', '_')}"
+
 
 dev_path = find_device_path(bus, address)
 
-def on_pair_reply():
+
+def finish_success():
     global pair_success
     pair_success = True
+    sys.stdout.write("RESULT success\n")
+    sys.stdout.flush()
+    loop.quit()
+
+
+def on_connect_error(err):
+    global pair_success
+    pair_success = False
+    sys.stdout.write(f"RESULT error {err}\n")
+    sys.stdout.flush()
+    loop.quit()
+
+
+def on_pair_reply():
     try:
         dev_obj = bus.get_object("org.bluez", dev_path)
         props = dbus.Interface(dev_obj, PROPERTIES_INTERFACE)
@@ -141,17 +243,10 @@ def on_pair_reply():
     try:
         dev_obj = bus.get_object("org.bluez", dev_path)
         dev = dbus.Interface(dev_obj, DEVICE_INTERFACE)
-        dev.Connect()
-    except Exception:
-        pass
-    sys.stdout.write("RESULT success\n")
-    sys.stdout.flush()
-    loop.quit()
+        dev.Connect(reply_handler=finish_success, error_handler=on_connect_error)
+    except Exception as e:
+        on_connect_error(e)
 
-def on_connect_error(err):
-    sys.stdout.write(f"RESULT error {err}\n")
-    sys.stdout.flush()
-    loop.quit()
 
 def on_pair_error(err):
     err_str = str(err)
@@ -159,19 +254,22 @@ def on_pair_error(err):
         try:
             dev_obj = bus.get_object("org.bluez", dev_path)
             dev = dbus.Interface(dev_obj, DEVICE_INTERFACE)
-            dev.Connect(reply_handler=on_pair_reply, error_handler=on_connect_error)
+            dev.Connect(reply_handler=finish_success, error_handler=on_connect_error)
             return
         except Exception as e:
             err_str = str(e)
-    sys.stdout.write(f"RESULT error {err_str}\n")
-    sys.stdout.flush()
-    loop.quit()
+    on_connect_error(err_str)
+
 
 def on_timeout():
+    global pair_success
+    pair_success = False
+    clear_pending_prompt()
     sys.stdout.write("RESULT timeout\n")
     sys.stdout.flush()
     loop.quit()
     return False
+
 
 GLib.timeout_add_seconds(35, on_timeout)
 
@@ -179,7 +277,7 @@ try:
     dev_obj = bus.get_object("org.bluez", dev_path)
     device = dbus.Interface(dev_obj, DEVICE_INTERFACE)
     device.Pair(reply_handler=on_pair_reply, error_handler=on_pair_error)
-except Exception as e:
+except Exception:
     cleanup()
     sys.exit(1)
 

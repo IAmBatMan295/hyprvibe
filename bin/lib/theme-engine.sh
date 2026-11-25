@@ -41,6 +41,7 @@ load_colors_file() {
     done < "$colors_file"
 
     # Semantic aliases & fallbacks
+    [[ -n "${THEME_COLORS[mode]:-}" ]] || THEME_COLORS[mode]="dark"
     [[ -n "${THEME_COLORS[background]:-}" ]] || THEME_COLORS[background]="${THEME_COLORS[bg]:-#000000}"
     [[ -n "${THEME_COLORS[foreground]:-}" ]] || THEME_COLORS[foreground]="${THEME_COLORS[fg]:-#ffffff}"
     [[ -n "${THEME_COLORS[lighter_background]:-}" ]] || THEME_COLORS[lighter_background]="${THEME_COLORS[selection]:-${THEME_COLORS[background]}}"
@@ -95,6 +96,24 @@ get_theme_color() {
     fi
 }
 
+escape_sed_repl() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//&/\\&}"
+    s="${s//|/\\|}"
+    printf '%s' "$s"
+}
+
+_write_sed_script() {
+    local target_script="$1"
+    local key escaped
+    : > "$target_script"
+    for key in "${!THEME_COLORS[@]}"; do
+        escaped="$(escape_sed_repl "${THEME_COLORS[$key]}")"
+        printf 's|{{ %s }}|%s|g\n' "$key" "$escaped" >> "$target_script"
+    done
+}
+
 render_template() {
     local template_file="$1"
     local output_file="$2"
@@ -105,19 +124,26 @@ render_template() {
         return 1
     fi
 
-    local cleanup_script=0
+    local out_dir out_base tmp_out cleanup_script=0
+    out_dir="$(dirname "$output_file")"
+    out_base="$(basename "$output_file")"
+    mkdir -p "$out_dir"
+
     if [[ -z "$sed_script" || ! -f "$sed_script" ]]; then
         sed_script="$(mktemp)"
         cleanup_script=1
-        local key value
-        for key in "${!THEME_COLORS[@]}"; do
-            value="${THEME_COLORS[$key]}"
-            printf 's|{{ %s }}|%s|g\n' "$key" "$value" >> "$sed_script"
-        done
+        _write_sed_script "$sed_script"
     fi
 
-    mkdir -p "$(dirname "$output_file")"
-    sed -f "$sed_script" "$template_file" > "$output_file"
+    tmp_out="$(mktemp "${out_dir}/.${out_base}.XXXXXX")"
+    if sed -f "$sed_script" "$template_file" > "$tmp_out"; then
+        chmod 644 "$tmp_out" 2>/dev/null || true
+        mv -f "$tmp_out" "$output_file"
+    else
+        rm -f "$tmp_out"
+        (( cleanup_script == 1 )) && rm -f "$sed_script"
+        return 1
+    fi
 
     if (( cleanup_script == 1 )); then
         rm -f "$sed_script"
@@ -136,27 +162,33 @@ render_all_templates() {
 
     mkdir -p "$output_dir"
 
-    # Pre-compile sed substitution table once for all templates
-    local sed_script
-    sed_script="$(mktemp)"
-    trap 'rm -f "$sed_script"' EXIT RETURN
+    # Run inside a subshell so temp cleanup never clobbers the caller's EXIT/RETURN traps.
+    (
+        set -euo pipefail
+        local sed_script stage_dir
+        sed_script="$(mktemp)"
+        stage_dir="$(mktemp -d "${output_dir}/.render.XXXXXX")"
+        trap 'rm -rf "$sed_script" "$stage_dir"' EXIT
 
-    local key value
-    for key in "${!THEME_COLORS[@]}"; do
-        value="${THEME_COLORS[$key]}"
-        printf 's|{{ %s }}|%s|g\n' "$key" "$value" >> "$sed_script"
-    done
+        _write_sed_script "$sed_script"
 
-    local tpl filename out_name
-    shopt -s nullglob
-    for tpl in "$templates_dir"/*.tpl; do
-        filename="$(basename "$tpl")"
-        out_name="${filename%.tpl}"
-        render_template "$tpl" "${output_dir}/${out_name}" "$sed_script"
-    done
-    shopt -u nullglob
+        local tpl filename out_name
+        shopt -s nullglob
+        local tpls=("$templates_dir"/*.tpl)
+        shopt -u nullglob
 
-    rm -f "$sed_script"
-    trap - EXIT RETURN
-    return 0
+        for tpl in "${tpls[@]}"; do
+            filename="$(basename "$tpl")"
+            out_name="${filename%.tpl}"
+            sed -f "$sed_script" "$tpl" > "${stage_dir}/${out_name}"
+            chmod 644 "${stage_dir}/${out_name}" 2>/dev/null || true
+        done
+
+        for tpl in "${tpls[@]}"; do
+            filename="$(basename "$tpl")"
+            out_name="${filename%.tpl}"
+            mv -f "${stage_dir}/${out_name}" "${output_dir}/${out_name}"
+        done
+    )
+    return $?
 }

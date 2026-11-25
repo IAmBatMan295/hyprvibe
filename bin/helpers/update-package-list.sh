@@ -10,94 +10,64 @@ HELPER_TITLE="Update Package List"
 HELPER_ICON=""
 HELPER_ORDER=20
 
-# ------------------------------------------------------------------------------
-# Floating Window Spawn Logic (40% screen width x 40% height, centered)
-# ------------------------------------------------------------------------------
-if [[ "${1:-}" != "--inner" && "${1:-}" != "--headless" ]]; then
-    SCRIPT_FILE=$(readlink -f "$0")
-
-    MON_INFO=$(hyprctl monitors -j 2>/dev/null || true)
-    WIDTH=$(echo "$MON_INFO" | jq -r '.[] | select(.focused == true) | .width // empty' 2>/dev/null || true)
-    if [[ -z "$WIDTH" ]]; then
-        WIDTH=$(echo "$MON_INFO" | jq -r '.[0].width // 1920' 2>/dev/null || true)
-        HEIGHT=$(echo "$MON_INFO" | jq -r '.[0].height // 1080' 2>/dev/null || true)
-        SCALE=$(echo "$MON_INFO" | jq -r '.[0].scale // 1.0' 2>/dev/null || true)
-    else
-        HEIGHT=$(echo "$MON_INFO" | jq -r '.[] | select(.focused == true) | .height // 1080' 2>/dev/null || true)
-        SCALE=$(echo "$MON_INFO" | jq -r '.[] | select(.focused == true) | .scale // 1.0' 2>/dev/null || true)
-    fi
-
-    TARGET_W=$(awk -v w="$WIDTH" -v s="$SCALE" 'BEGIN { printf "%d", (w / s) * 0.40 }')
-    TARGET_H=$(awk -v h="$HEIGHT" -v s="$SCALE" 'BEGIN { printf "%d", (h / s) * 0.40 }')
-    [[ "$TARGET_W" -lt 600 ]] && TARGET_W=600
-    [[ "$TARGET_H" -lt 380 ]] && TARGET_H=380
-
-    if command -v hyprctl >/dev/null 2>&1 && pgrep -x Hyprland >/dev/null 2>&1; then
-        hyprctl eval "hl.window_rule({ match = { class = 'update-package-list' }, float = true, center = true, size = '${TARGET_W} ${TARGET_H}' })" >/dev/null 2>&1 || true
-        hyprctl eval "hl.exec_cmd('foot -a update-package-list -T \"${HELPER_TITLE}\" -w ${TARGET_W}x${TARGET_H} bash \"${SCRIPT_FILE}\" --inner \"$@\"')" >/dev/null 2>&1 || true
-        exit 0
-    fi
-fi
-
-# ------------------------------------------------------------------------------
-# Title Display (Clean left-aligned text, no wrapping)
-# ------------------------------------------------------------------------------
-print_title() {
-    echo ""
-    echo "  ${HELPER_ICON}  ${HELPER_TITLE}"
-    echo ""
-}
-
-clear
-print_title
-
-# Paths
 REAL_SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
 ROOT_DIR="$(cd -- "$(dirname -- "${REAL_SCRIPT}")/../.." && pwd)"
-PACMAN_TXT="${ROOT_DIR}/packages/pacman.txt"
-YAY_TXT="${ROOT_DIR}/packages/yay.txt"
+# shellcheck source=../lib/helper-ui.sh
+source "${ROOT_DIR}/bin/lib/helper-ui.sh"
 
-# Non-interactive / headless check
+helper_maybe_spawn_window "$0" 0.40 0.40 600 380 "--inner --headless" "$@"
+
+PACKAGES_DIR="${PACKAGES_DIR:-${ROOT_DIR}/packages}"
+PACMAN_TXT="${PACKAGES_DIR}/pacman.txt"
+YAY_TXT="${PACKAGES_DIR}/yay.txt"
+
 AUTO_YES=false
 for arg in "$@"; do
     if [[ "$arg" == "--yes" || "$arg" == "-y" || "$arg" == "--headless" ]]; then
         AUTO_YES=true
+        HELPER_HEADLESS=true
     fi
 done
+
+clear 2>/dev/null || true
+helper_print_title
+helper_enable_error_pause
 
 if [[ "$AUTO_YES" != "true" ]]; then
     echo "  Update pacman.txt & yay.txt in HyprVibe packages/?"
     echo ""
     read -rp "  Proceed? [Y/n]: " response
     response="${response:-Y}"
-    if [[ ! "$response" =~ ^[Yy]$ ]]; then
+    if [[ "$response" =~ ^[qQ]$ ]] || [[ ! "$response" =~ ^[Yy]$ ]]; then
         echo ""
         echo "  Aborted."
-        echo ""
-        sleep 1
+        helper_wait_for_q "  Press 'q' to close..."
         exit 0
     fi
     echo ""
 fi
 
-echo "  Running pacman and yay queries..."
+if ! command -v pacman >/dev/null 2>&1; then
+    helper_fail "'pacman' command not found."
+fi
 
-if pacman -Qneq > "$PACMAN_TXT" && pacman -Qmeq > "$YAY_TXT"; then
+echo "  Running pacman queries..."
+
+TMP_PKG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/hyprvibe-pkgs.XXXXXX")"
+trap 'rm -rf "$TMP_PKG_DIR"' EXIT
+
+if pacman -Qneq > "${TMP_PKG_DIR}/pacman.txt" && pacman -Qmeq > "${TMP_PKG_DIR}/yay.txt"; then
+    mkdir -p "$PACKAGES_DIR"
+    mv -f "${TMP_PKG_DIR}/pacman.txt" "$PACMAN_TXT"
+    mv -f "${TMP_PKG_DIR}/yay.txt" "$YAY_TXT"
     PAC_COUNT=$(wc -l < "$PACMAN_TXT")
     YAY_COUNT=$(wc -l < "$YAY_TXT")
     echo ""
     echo "  ✅ Successfully updated package lists:"
     echo "     - pacman.txt: $PAC_COUNT packages"
     echo "     - yay.txt:    $YAY_COUNT packages"
-    echo ""
-    notify-send -a "${HELPER_TITLE}" "${HELPER_TITLE}" "Successfully updated pacman ($PAC_COUNT) & yay ($YAY_COUNT) lists" 2>/dev/null || true
+    helper_notify normal "Successfully updated pacman ($PAC_COUNT) & yay ($YAY_COUNT) lists"
+    helper_wait_for_q "  Press 'q' to close..."
 else
-    echo ""
-    echo "  ❌ Failed to update package lists."
-    echo ""
-    notify-send -u critical -a "${HELPER_TITLE}" "${HELPER_TITLE}" "Failed to update package lists" 2>/dev/null || true
-fi
-
-if [[ "$AUTO_YES" != "true" ]]; then
-    read -rp "  Press Enter to exit..."
+    helper_fail "Failed to query package lists via pacman."
 fi

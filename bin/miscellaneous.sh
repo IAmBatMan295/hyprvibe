@@ -13,7 +13,12 @@ fi
 # shellcheck disable=SC1090
 source "$COMMON_LIB"
 
-USER_HOME="$(resolve_user_home)"
+USER_HOME="${USER_HOME:-$(resolve_user_home)}"
+MKINITCPIO_CONF="${MKINITCPIO_CONF:-/etc/mkinitcpio.conf}"
+GRUB_DEFAULT_FILE="${GRUB_DEFAULT_FILE:-/etc/default/grub}"
+BOOT_DIR="${BOOT_DIR:-/boot}"
+ETC_KERNEL_CMDLINE="${ETC_KERNEL_CMDLINE:-/etc/kernel/cmdline}"
+LIMINE_DEFAULT_FILE="${LIMINE_DEFAULT_FILE:-/etc/default/limine}"
 
 mkdir -p "${USER_HOME}/Pictures/Screenshots" "${USER_HOME}/Pictures/Recordings"
 
@@ -158,43 +163,208 @@ install_uosc_stack() {
     log_success "uosc + thumbfast install complete"
 }
 
-detect_gpu_driver() {
-    local gpu_info
-    gpu_info="$(lspci -nnk 2>/dev/null | grep -i -EA3 'VGA|3D|Display' || true)"
-
-    if echo "$gpu_info" | grep -iq "Kernel driver in use: amdgpu"; then
-        printf '%s\n' "amdgpu"
-        return 0
-    elif echo "$gpu_info" | grep -iq "Kernel driver in use: i915"; then
-        printf '%s\n' "i915"
-        return 0
-    elif echo "$gpu_info" | grep -iq "Kernel driver in use: xe"; then
-        printf '%s\n' "xe"
-        return 0
-    elif echo "$gpu_info" | grep -iqE "Kernel driver in use: (nvidia|nouveau)"; then
-        printf '%s\n' "nvidia"
-        return 0
+detect_gpu_drivers() {
+    local gpu_info=""
+    if command -v lspci >/dev/null 2>&1; then
+        gpu_info="$(lspci -nnk 2>/dev/null | grep -i -EA3 'VGA|3D|Display' || true)"
     fi
 
-    if [[ -d /sys/module/amdgpu ]]; then
-        printf '%s\n' "amdgpu"
-        return 0
-    elif [[ -d /sys/module/i915 ]]; then
-        printf '%s\n' "i915"
-        return 0
-    elif [[ -d /sys/module/xe ]]; then
-        printf '%s\n' "xe"
+    local -A seen=()
+    local -a drivers=()
+    local mod
+    for mod in amdgpu i915 xe; do
+        if [[ -n "$gpu_info" ]]; then
+            if printf '%s\n' "$gpu_info" | grep -iqE "Kernel driver in use:\s*${mod}\b"; then
+                seen["$mod"]=1
+                drivers+=("$mod")
+            fi
+        elif [[ -d "/sys/module/${mod}" ]]; then
+            seen["$mod"]=1
+            drivers+=("$mod")
+        fi
+    done
+
+    if (( ${#drivers[@]} > 0 )); then
+        printf '%s\n' "${drivers[@]}"
         return 0
     fi
-
     return 1
+}
+
+_elevate_cmd() {
+    local target="$1"
+    shift
+    if [[ -w "$target" || -w "$(dirname "$target")" || "$EUID" -eq 0 ]]; then
+        "$@"
+    else
+        sudo "$@"
+    fi
+}
+
+configure_mkinitcpio_plymouth_and_kms() {
+    [[ -f "$MKINITCPIO_CONF" ]] || return 0
+
+    local -a gpu_mods=()
+    mapfile -t gpu_mods < <(detect_gpu_drivers || true)
+
+    local mods_csv="${gpu_mods[*]:-}"
+    local tmp_mk
+    tmp_mk="$(mktemp "${TMP_DIR}/mkinitcpio.conf.XXXXXX")"
+
+    if [[ ! -f "${MKINITCPIO_CONF}.hyprvibe_bak" ]]; then
+        _elevate_cmd "$MKINITCPIO_CONF" cp -p "$MKINITCPIO_CONF" "${MKINITCPIO_CONF}.hyprvibe_bak" 2>/dev/null || true
+    fi
+
+    python3 - "$MKINITCPIO_CONF" "$tmp_mk" "$mods_csv" << 'EOF'
+import re
+import sys
+
+src_path, dst_path, mods_str = sys.argv[1:4]
+mods_to_add = [m for m in mods_str.split() if m]
+
+with open(src_path, "r", encoding="utf-8") as f:
+    text = f.read()
+
+def update_array_line(content: str, key: str, updater) -> str:
+    pattern = re.compile(rf'^({re.escape(key)}=\()([^)]*)(\).*)$', re.MULTILINE)
+    def _repl(m):
+        tokens = m.group(2).split()
+        new_tokens = updater(tokens)
+        return f"{m.group(1)}{' '.join(new_tokens)}{m.group(3)}"
+    return pattern.sub(_repl, content, count=1)
+
+if mods_to_add:
+    def add_mods(tokens):
+        out = list(tokens)
+        for mod in mods_to_add:
+            if mod not in out:
+                out.append(mod)
+        return out
+    text = update_array_line(text, "MODULES", add_mods)
+
+def add_plymouth_hook(tokens):
+    if "plymouth" in tokens:
+        return tokens
+    out = list(tokens)
+    for anchor in ("udev", "systemd"):
+        if anchor in out:
+            idx = out.index(anchor) + 1
+            out.insert(idx, "plymouth")
+            return out
+    out.append("plymouth")
+    return out
+
+text = update_array_line(text, "HOOKS", add_plymouth_hook)
+
+with open(dst_path, "w", encoding="utf-8") as f:
+    f.write(text)
+EOF
+
+    _elevate_cmd "$MKINITCPIO_CONF" install -m 644 "$tmp_mk" "$MKINITCPIO_CONF"
+}
+
+_inject_quiet_splash_file() {
+    local target="$1"
+    local kind="$2"
+    [[ -f "$target" ]] || return 0
+
+    local tmp_out
+    tmp_out="$(mktemp "${TMP_DIR}/bootcfg.XXXXXX")"
+
+    if [[ ! -f "${target}.hyprvibe_bak" ]]; then
+        _elevate_cmd "$target" cp -p "$target" "${target}.hyprvibe_bak" 2>/dev/null || true
+    fi
+
+    python3 - "$target" "$tmp_out" "$kind" << 'EOF'
+import re
+import sys
+
+src, dst, kind = sys.argv[1:4]
+with open(src, "r", encoding="utf-8") as f:
+    text = f.read()
+
+def ensure_tokens(line_val: str) -> str:
+    tokens = line_val.split()
+    for t in ("quiet", "splash"):
+        if t not in tokens:
+            tokens.append(t)
+    return " ".join(tokens)
+
+if kind == "grub":
+    pat = re.compile(r'^(GRUB_CMDLINE_LINUX_DEFAULT=")(.*)(")$', re.MULTILINE)
+    if pat.search(text):
+        text = pat.sub(lambda m: f'{m.group(1)}{ensure_tokens(m.group(2))}{m.group(3)}', text, count=1)
+elif kind == "sdboot_entry":
+    pat = re.compile(r'^(\s*options\s+)(.+)$', re.MULTILINE)
+    text = pat.sub(lambda m: f'{m.group(1)}{ensure_tokens(m.group(2))}', text)
+elif kind == "cmdline":
+    text = ensure_tokens(text.strip()) + "\n"
+elif kind == "limine_conf":
+    pat = re.compile(r'^(\s*(?:KERNEL_CMDLINE(?:\[[^\]]+\])?|CMDLINE):\s*)(.+)$', re.MULTILINE)
+    text = pat.sub(lambda m: f'{m.group(1)}{ensure_tokens(m.group(2))}', text)
+elif kind == "limine_default":
+    pat = re.compile(r'^(KERNEL_CMDLINE(?:\[default\])?=")(.*)(")$', re.MULTILINE)
+    if pat.search(text):
+        text = pat.sub(lambda m: f'{m.group(1)}{ensure_tokens(m.group(2))}{m.group(3)}', text, count=1)
+
+with open(dst, "w", encoding="utf-8") as f:
+    f.write(text)
+EOF
+
+    _elevate_cmd "$target" install -m 644 "$tmp_out" "$target"
+}
+
+configure_bootloader_kernel_params() {
+    local updated=0
+
+    # 1. GRUB
+    if [[ -f "$GRUB_DEFAULT_FILE" ]]; then
+        log_info "Ensuring quiet splash in ${GRUB_DEFAULT_FILE}"
+        _inject_quiet_splash_file "$GRUB_DEFAULT_FILE" "grub"
+        updated=1
+        if [[ -d "${BOOT_DIR}/grub" ]] && command -v grub-mkconfig >/dev/null 2>&1; then
+            _elevate_cmd "${BOOT_DIR}/grub/grub.cfg" grub-mkconfig -o "${BOOT_DIR}/grub/grub.cfg" >/dev/null 2>&1 || true
+        fi
+    fi
+
+    # 2. systemd-boot
+    shopt -s nullglob
+    local sd_entries=("${BOOT_DIR}"/loader/entries/*.conf "${BOOT_DIR}"/efi/loader/entries/*.conf)
+    shopt -u nullglob
+    local entry
+    for entry in "${sd_entries[@]}"; do
+        log_info "Ensuring quiet splash in systemd-boot entry ${entry}"
+        _inject_quiet_splash_file "$entry" "sdboot_entry"
+        updated=1
+    done
+    if [[ -f "$ETC_KERNEL_CMDLINE" ]]; then
+        _inject_quiet_splash_file "$ETC_KERNEL_CMDLINE" "cmdline"
+        updated=1
+    fi
+
+    # 3. Limine
+    local limine_cfg
+    for limine_cfg in "${BOOT_DIR}/limine/limine.conf" "${BOOT_DIR}/limine.conf"; do
+        if [[ -f "$limine_cfg" ]]; then
+            log_info "Ensuring quiet splash in Limine config ${limine_cfg}"
+            _inject_quiet_splash_file "$limine_cfg" "limine_conf"
+            updated=1
+        fi
+    done
+    if [[ -f "$LIMINE_DEFAULT_FILE" ]]; then
+        _inject_quiet_splash_file "$LIMINE_DEFAULT_FILE" "limine_default"
+        updated=1
+    fi
+
+    if (( updated == 0 )); then
+        log_warn "No supported bootloader configuration detected under ${BOOT_DIR}; skipping quiet splash injection."
+    fi
 }
 
 setup_plymouth_glitch() {
     log_phase "Plymouth & Early KMS Setup"
 
     local plymouth_local_dir="${SCRIPT_DIR}/../plymouth-theme/glitch"
-    local sys_plymouth_dir="/usr/share/plymouth/themes/glitch"
 
     if [[ -d "$plymouth_local_dir" ]]; then
         log_info "Installing Plymouth 'glitch' theme from repository"
@@ -203,17 +373,8 @@ setup_plymouth_glitch() {
         log_warn "Plymouth theme 'glitch' not found in $plymouth_local_dir. Assuming already installed or skipping default copy."
     fi
 
-    local gpu_mod
-    gpu_mod="$(detect_gpu_driver || true)"
-
-    if [[ "$gpu_mod" == "amdgpu" || "$gpu_mod" == "i915" || "$gpu_mod" == "xe" ]]; then
-        log_info "Detected GPU driver (${gpu_mod}). Injecting into mkinitcpio for Early KMS..."
-        sudo sed -i -E "/^MODULES=\(/ { /\b${gpu_mod}\b/! s/^MODULES=\(/MODULES=(${gpu_mod} / }" /etc/mkinitcpio.conf
-    elif [[ "$gpu_mod" == "nvidia" ]]; then
-        log_info "Nvidia GPU detected. Skipping Early KMS module injection."
-    else
-        log_warn "Unknown or unsupported GPU. Skipping Early KMS module injection."
-    fi
+    configure_mkinitcpio_plymouth_and_kms
+    configure_bootloader_kernel_params
 
     log_info "Applying theme and rebuilding initramfs (-R flag)..."
     if command -v plymouth-set-default-theme >/dev/null 2>&1; then
@@ -228,22 +389,40 @@ setup_plymouth_glitch() {
 
 configure_flatpak_themes() {
     log_phase "Flatpak Themes"
-    
+
     if ! command -v flatpak >/dev/null 2>&1; then
         log_warn "Flatpak missing. Skip."
         return 0
     fi
 
-    log_info "Override flatpak to dark theme"
-    flatpak override --user --filesystem="$HOME/.themes"
-    flatpak override --user --filesystem="$HOME/.icons"
-    flatpak override --user --filesystem="$HOME/.local/share/themes"
-    flatpak override --user --filesystem="$HOME/.local/share/icons"
-    flatpak override --user --filesystem="$HOME/.config/gtk-3.0:ro"
-    flatpak override --user --filesystem="$HOME/.config/gtk-4.0:ro"
+    log_info "Override flatpak to dark theme and HyprVibe state dir"
+    flatpak override --user --filesystem="${USER_HOME}/.themes"
+    flatpak override --user --filesystem="${USER_HOME}/.icons"
+    flatpak override --user --filesystem="${USER_HOME}/.local/share/themes"
+    flatpak override --user --filesystem="${USER_HOME}/.local/share/icons"
+    flatpak override --user --filesystem="${USER_HOME}/.local/state/hyprvibe:ro"
+    flatpak override --user --filesystem="${USER_HOME}/.config/gtk-3.0:ro"
+    flatpak override --user --filesystem="${USER_HOME}/.config/gtk-4.0:ro"
     flatpak override --user --env=GTK_THEME=adw-gtk3-dark
-    
+
     log_success "Flatpak dark theme done"
+}
+
+ensure_tmux_tpm() {
+    log_phase "Tmux Plugin Manager (TPM)"
+
+    local tpm_dir="${USER_HOME}/.tmux/plugins/tpm"
+    if [[ -d "$tpm_dir" ]]; then
+        log_success "TPM already present at ${tpm_dir}"
+        return 0
+    fi
+    if ! command -v git >/dev/null 2>&1; then
+        log_warn "git missing; cannot clone TPM."
+        return 0
+    fi
+    mkdir -p "$(dirname "$tpm_dir")"
+    git clone https://github.com/tmux-plugins/tpm "$tpm_dir"
+    log_success "TPM installed to ${tpm_dir}"
 }
 
 configure_gsettings() {
@@ -399,6 +578,9 @@ main() {
     if [[ "$run_gsettings" == "true" ]]; then
         configure_gsettings
     fi
+    if [[ "$run_all" == "true" ]]; then
+        ensure_tmux_tpm
+    fi
     if [[ "$run_madsnake" == "true" ]]; then
         install_madsnake
     fi
@@ -407,4 +589,6 @@ main() {
     fi
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

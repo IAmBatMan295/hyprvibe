@@ -83,21 +83,25 @@ BorderSurface {
   readonly property var _selectedBorderSpec: Border.controlSpec("selected", root.foreground, root.accent)
   readonly property var _normalBorderSpec: Border.controlSpec("normal", root.foreground, root.accent)
   readonly property real _reservedBorderTop: Math.max(
+    2,
     focusable ? Border.top(_focusBorderSpec) : 0,
     Border.top(_hoverBorderSpec),
     Border.top(_selectedBorderSpec),
     bordered ? Border.top(_normalBorderSpec) : 0)
   readonly property real _reservedBorderRight: Math.max(
+    2,
     focusable ? Border.right(_focusBorderSpec) : 0,
     Border.right(_hoverBorderSpec),
     Border.right(_selectedBorderSpec),
     bordered ? Border.right(_normalBorderSpec) : 0)
   readonly property real _reservedBorderBottom: Math.max(
+    2,
     focusable ? Border.bottom(_focusBorderSpec) : 0,
     Border.bottom(_hoverBorderSpec),
     Border.bottom(_selectedBorderSpec),
     bordered ? Border.bottom(_normalBorderSpec) : 0)
   readonly property real _reservedBorderLeft: Math.max(
+    2,
     focusable ? Border.left(_focusBorderSpec) : 0,
     Border.left(_hoverBorderSpec),
     Border.left(_selectedBorderSpec),

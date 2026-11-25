@@ -618,7 +618,7 @@ Panel {
     anchors.fill: parent
     bar: root.bar
     text: root.outputIcon()
-    tooltipText: root.allMuted ? "Audio: Muted" : ("Playing at " + Math.round(root.outputVolume * 100) + "%")
+    tooltipText: !root.anyAudible ? "Audio: Muted" : ("Playing at " + Math.round(root.outputVolume * 100) + "%")
     onPressed: function(b) {
       if (b === Qt.RightButton) root.toggleAllMuted()
       else if (b === Qt.LeftButton) root.toggle()

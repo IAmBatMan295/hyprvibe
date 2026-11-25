@@ -21,10 +21,14 @@ if [[ $action != "scan" ]]; then
 fi
 
 power_on() {
-  [[ $(timeout 2s bluetoothctl show 2>/dev/null) == *"Powered: yes"* ]] && return
+  local info
+  info="$(timeout 2s bluetoothctl show 2>/dev/null || true)"
+  if [[ "$info" == *"Powered: yes"* ]]; then
+    return 0
+  fi
   # Not bluetoothctl directly: Bluetooth is turned off by an rfkill soft block,
   # and BlueZ refuses to power an adapter up while one is set.
-  hyprvibe-bluetooth-power on || true
+  hyprvibe-bluetooth-power on || return 1
 }
 
 trust_device() {
@@ -39,24 +43,24 @@ case "$action" in
   pair)
     power_on
     if command -v hyprvibe-bluetooth-pair >/dev/null 2>&1; then
-      hyprvibe-bluetooth-pair "$address" || true
+      hyprvibe-bluetooth-pair "$address"
     else
-      timeout 20s bluetoothctl --agent NoInputNoOutput pair "$address" >/dev/null 2>&1 || true
+      timeout 20s bluetoothctl --agent NoInputNoOutput pair "$address" >/dev/null 2>&1
     fi
     trust_device
-    timeout 20s bluetoothctl connect "$address" >/dev/null 2>&1 || true
+    timeout 20s bluetoothctl connect "$address" >/dev/null 2>&1
     ;;
   connect)
     power_on
     trust_device
-    timeout 20s bluetoothctl connect "$address" >/dev/null 2>&1 || true
+    timeout 20s bluetoothctl connect "$address" >/dev/null 2>&1
     ;;
   disconnect)
-    timeout 10s bluetoothctl disconnect "$address" >/dev/null 2>&1 || true
+    timeout 10s bluetoothctl disconnect "$address" >/dev/null 2>&1
     ;;
   forget)
     power_on
     timeout 10s bluetoothctl disconnect "$address" >/dev/null 2>&1 || true
-    timeout 10s bluetoothctl remove "$address" >/dev/null 2>&1 || true
+    timeout 10s bluetoothctl remove "$address" >/dev/null 2>&1
     ;;
 esac

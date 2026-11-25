@@ -151,6 +151,7 @@ hyprsunset
 iio-sensor-proxy
 ijs
 inetutils
+inotify-tools
 intel-gmmlib
 intel-media-driver
 iptables
@@ -173,6 +174,7 @@ kde-cli-tools
 kdeclarative
 kdecoration
 kded
+kdenlive
 kdesu
 kdnssd
 kdsoap
@@ -486,6 +488,7 @@ s-nail
 sddm
 semver
 sg3_utils
+shellcheck
 shelly
 signon-kwallet-extension
 signon-plugin-oauth2
@@ -494,6 +497,7 @@ signond
 simdjson
 slurp
 smartmontools
+snapshot
 socat
 sof-firmware
 solid

@@ -10,106 +10,106 @@ HELPER_TITLE="Rename Theme Wallpapers"
 HELPER_ICON=""
 HELPER_ORDER=30
 
-# ------------------------------------------------------------------------------
-# Floating Window Spawn Logic (40% screen width x 40% height, centered)
-# ------------------------------------------------------------------------------
-if [[ "${1:-}" != "--inner" && "${1:-}" != "--headless" ]]; then
-    SCRIPT_FILE=$(readlink -f "$0")
-
-    MON_INFO=$(hyprctl monitors -j 2>/dev/null || true)
-    WIDTH=$(echo "$MON_INFO" | jq -r '.[] | select(.focused == true) | .width // empty' 2>/dev/null || true)
-    if [[ -z "$WIDTH" ]]; then
-        WIDTH=$(echo "$MON_INFO" | jq -r '.[0].width // 1920' 2>/dev/null || true)
-        HEIGHT=$(echo "$MON_INFO" | jq -r '.[0].height // 1080' 2>/dev/null || true)
-        SCALE=$(echo "$MON_INFO" | jq -r '.[0].scale // 1.0' 2>/dev/null || true)
-    else
-        HEIGHT=$(echo "$MON_INFO" | jq -r '.[] | select(.focused == true) | .height // 1080' 2>/dev/null || true)
-        SCALE=$(echo "$MON_INFO" | jq -r '.[] | select(.focused == true) | .scale // 1.0' 2>/dev/null || true)
-    fi
-
-    TARGET_W=$(awk -v w="$WIDTH" -v s="$SCALE" 'BEGIN { printf "%d", (w / s) * 0.40 }')
-    TARGET_H=$(awk -v h="$HEIGHT" -v s="$SCALE" 'BEGIN { printf "%d", (h / s) * 0.40 }')
-    [[ "$TARGET_W" -lt 600 ]] && TARGET_W=600
-    [[ "$TARGET_H" -lt 380 ]] && TARGET_H=380
-
-    if command -v hyprctl >/dev/null 2>&1 && pgrep -x Hyprland >/dev/null 2>&1; then
-        hyprctl eval "hl.window_rule({ match = { class = 'rename-theme-wallpapers' }, float = true, center = true, size = '${TARGET_W} ${TARGET_H}' })" >/dev/null 2>&1 || true
-        hyprctl eval "hl.exec_cmd('foot -a rename-theme-wallpapers -T \"${HELPER_TITLE}\" -w ${TARGET_W}x${TARGET_H} bash \"${SCRIPT_FILE}\" --inner \"$@\"')" >/dev/null 2>&1 || true
-        exit 0
-    fi
-fi
-
-# ------------------------------------------------------------------------------
-# Title Display (Clean left-aligned text, no wrapping)
-# ------------------------------------------------------------------------------
-print_title() {
-    echo ""
-    echo "  ${HELPER_ICON}  ${HELPER_TITLE}"
-    echo ""
-}
-
-clear
-print_title
-
-# Paths
 REAL_SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
 ROOT_DIR="$(cd -- "$(dirname -- "${REAL_SCRIPT}")/../.." && pwd)"
-THEMES_DIR="${ROOT_DIR}/themes"
+# shellcheck source=../lib/helper-ui.sh
+source "${ROOT_DIR}/bin/lib/helper-ui.sh"
+
+helper_maybe_spawn_window "$0" 0.40 0.40 600 380 "--inner --headless" "$@"
+
+THEMES_DIR="${THEMES_DIR:-${ROOT_DIR}/themes}"
+
+# Non-interactive / headless & optional args check
+AUTO_YES=false
+while (( $# > 0 )); do
+    case "$1" in
+        --yes|-y|--headless)
+            AUTO_YES=true
+            HELPER_HEADLESS=true
+            shift
+            ;;
+        --themes-dir)
+            [[ $# -ge 2 ]] || helper_fail "Missing directory path after --themes-dir"
+            THEMES_DIR="$2"
+            shift 2
+            ;;
+        --inner)
+            shift
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+clear 2>/dev/null || true
+helper_print_title
+helper_enable_error_pause
 
 if [[ ! -d "$THEMES_DIR" ]]; then
-    echo "  ❌ Error: themes directory not found at $THEMES_DIR" >&2
-    exit 1
+    helper_fail "themes directory not found at $THEMES_DIR"
 fi
-
-# Non-interactive / headless check
-AUTO_YES=false
-for arg in "$@"; do
-    if [[ "$arg" == "--yes" || "$arg" == "-y" || "$arg" == "--headless" ]]; then
-        AUTO_YES=true
-    fi
-done
 
 if [[ "$AUTO_YES" != "true" ]]; then
     echo "  Standardize theme wallpapers to <theme>-<index>.<ext>?"
     echo ""
     read -rp "  Proceed? [Y/n]: " response
     response="${response:-Y}"
-    if [[ ! "$response" =~ ^[Yy]$ ]]; then
+    if [[ "$response" =~ ^[qQ]$ ]] || [[ ! "$response" =~ ^[Yy]$ ]]; then
         echo ""
         echo "  Aborted."
-        echo ""
-        sleep 1
+        helper_wait_for_q "  Press 'q' to close..."
         exit 0
     fi
     echo ""
 fi
 
-echo "  Standardizing wallpapers in themes/ backgrounds..."
+echo "  Validating theme backgrounds before renaming..."
 echo ""
 
-TOTAL_RENAMED=0
-python3 - "$THEMES_DIR" << 'EOF'
+if ! python3 - "$THEMES_DIR" << 'EOF'
 import os
 import sys
 
 themes_dir = sys.argv[1]
 if not os.path.isdir(themes_dir):
-    sys.exit(f"Directory not found: {themes_dir}")
+    sys.exit(f"  Directory not found: {themes_dir}")
 
-total = 0
+VALID_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
+invalid_entries = []
+theme_batches = []
+
 for theme in sorted(os.listdir(themes_dir)):
     bg_dir = os.path.join(themes_dir, theme, "backgrounds")
     if not os.path.isdir(bg_dir):
         continue
 
-    files = sorted([
-        f for f in os.listdir(bg_dir)
-        if os.path.isfile(os.path.join(bg_dir, f)) and not f.startswith(".")
-    ])
+    files = []
+    for entry in sorted(os.listdir(bg_dir)):
+        if entry.startswith("."):
+            continue
+        full_path = os.path.join(bg_dir, entry)
+        if not os.path.isfile(full_path):
+            invalid_entries.append(full_path)
+            continue
+        ext = os.path.splitext(entry)[1].lower()
+        if ext not in VALID_EXTS:
+            invalid_entries.append(full_path)
+            continue
+        files.append(entry)
 
-    if not files:
-        continue
+    if files:
+        theme_batches.append((theme, bg_dir, files))
 
+if invalid_entries:
+    print("  Non-image file(s) detected in theme backgrounds:", file=sys.stderr)
+    for bad in invalid_entries:
+        print(f"    - {bad}", file=sys.stderr)
+    print("  Aborting before renaming any files.", file=sys.stderr)
+    sys.exit(1)
+
+total = 0
+for theme, bg_dir, files in theme_batches:
     print(f"  [{theme}] Renaming {len(files)} wallpaper(s)...")
 
     # Phase 1: Temporary names to prevent collision
@@ -131,10 +131,9 @@ for theme in sorted(os.listdir(themes_dir)):
 
 print(f"\n  ✅ All {total} theme wallpapers standardized successfully.")
 EOF
-
-notify-send -a "${HELPER_TITLE}" "${HELPER_TITLE}" "Successfully standardized theme wallpapers" 2>/dev/null || true
-
-echo ""
-if [[ "$AUTO_YES" != "true" ]]; then
-    read -rp "  Press Enter to exit..."
+then
+    helper_fail "Non-image file(s) found in theme backgrounds; nothing was renamed."
 fi
+
+helper_notify normal "Successfully standardized theme wallpapers"
+helper_wait_for_q "  Press 'q' to close..."

@@ -10,10 +10,17 @@ HELPER_TITLE="Wallpaper Theming"
 HELPER_ICON=""
 HELPER_ORDER=10
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
-THEMES_DIR="${ROOT_DIR}/themes"
-USER_THEMES_DIR="${HOME}/.config/hyprvibe/themes"
+REAL_SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
+ROOT_DIR="$(cd -- "$(dirname -- "${REAL_SCRIPT}")/../.." && pwd)"
+# shellcheck source=../lib/helper-ui.sh
+source "${ROOT_DIR}/bin/lib/helper-ui.sh"
+
+helper_maybe_spawn_window "$0" 0.40 0.40 600 380 "--inner --headless" "$@"
+
+THEMES_DIR="${THEMES_DIR:-${ROOT_DIR}/themes}"
+USER_THEMES_DIR="${USER_THEMES_DIR:-${HOME}/.config/hyprvibe/themes}"
+WORK_TMP="$(mktemp -d "${TMPDIR:-/tmp}/hyprvibe-theming.XXXXXX")"
+trap 'rm -rf "$WORK_TMP"' EXIT
 
 declare -A BUILTIN_LUTGEN_MAP=(
     ["catppuccin"]="catppuccin-mocha"
@@ -38,6 +45,7 @@ format_title() {
 PALETTES=()
 PALETTE_COLORS=()
 PALETTE_SLUGS=()
+PALETTE_NAMES=()
 declare -A SEEN_THEMES=()
 
 for tdir in "$THEMES_DIR" "$USER_THEMES_DIR"; do
@@ -65,15 +73,22 @@ for tdir in "$THEMES_DIR" "$USER_THEMES_DIR"; do
         slug="${BUILTIN_LUTGEN_MAP[$tname]:-$tname}"
         PALETTES+=("${slug}|${title}")
         PALETTE_SLUGS+=("$slug")
+        PALETTE_NAMES+=("$tname")
         PALETTE_COLORS+=("${hex_colors[*]}")
     done
 done
 
-apply_lutgen() {
+apply_lutgen_atomic() {
     local slug="$1"
     local idx="$2"
     local infile="$3"
     local outfile="$4"
+    local worker_id="${5:-0}"
+
+    local base_name="${infile##*/}"
+    local ext="${base_name##*.}"
+    [[ "$base_name" == "$ext" || -z "$ext" ]] && ext="png"
+    local tmp_out="${WORK_TMP}/render_${worker_id}_${RANDOM}.${ext}"
 
     # Optimal wallpaper parameters:
     # -R: Gaussian RBF interpolation (eliminates color banding and artifacts)
@@ -82,25 +97,27 @@ apply_lutgen() {
     # -P: Preserve luminosity (guarantees inky blacks without foggy wash)
     # -c: Cache generated Hald CLUT (speeds up batch wallpaper processing)
     local lut_opts=(-R -s=192 -n=12 -P -c)
+    local rc=1
 
-    # Monochrome uses built-in pure grayscale-dark (no color hues)
     if [[ "$slug" == "grayscale-dark" || "$slug" == "grayscale-light" || "$slug" == "monochrome" ]]; then
-        lutgen apply -p "grayscale-dark" "${lut_opts[@]}" "$infile" -o "$outfile"
-        return $?
-    fi
-
-    # Check if slug is recognized by lutgen built-in palettes
-    if [[ -n "${LUTGEN_BUILTINS[$slug]:-}" ]]; then
-        lutgen apply -p "$slug" "${lut_opts[@]}" "$infile" -o "$outfile"
+        lutgen apply -p "grayscale-dark" "${lut_opts[@]}" "$infile" -o "$tmp_out" && rc=0 || rc=$?
+    elif [[ -n "${LUTGEN_BUILTINS[$slug]:-}" ]]; then
+        lutgen apply -p "$slug" "${lut_opts[@]}" "$infile" -o "$tmp_out" && rc=0 || rc=$?
     else
-        # Pass dynamic custom colors from colors.toml for custom colored themes
         read -r -a custom_cols <<< "${PALETTE_COLORS[$idx]:-}"
         if (( ${#custom_cols[@]} > 0 )); then
-            lutgen apply "${lut_opts[@]}" "$infile" -o "$outfile" -- "${custom_cols[@]}"
+            lutgen apply "${lut_opts[@]}" "$infile" -o "$tmp_out" -- "${custom_cols[@]}" && rc=0 || rc=$?
         else
-            lutgen apply -p "grayscale-dark" "${lut_opts[@]}" "$infile" -o "$outfile"
+            lutgen apply -p "grayscale-dark" "${lut_opts[@]}" "$infile" -o "$tmp_out" && rc=0 || rc=$?
         fi
     fi
+
+    if (( rc == 0 )) && [[ -s "$tmp_out" ]]; then
+        mv -f "$tmp_out" "$outfile"
+        return 0
+    fi
+    rm -f "$tmp_out"
+    return 1
 }
 
 # ------------------------------------------------------------------------------
@@ -135,6 +152,7 @@ get_safe_target_path() {
 # Headless / Batch processing support (for tests & scripting)
 # ------------------------------------------------------------------------------
 if [[ "${1:-}" == "--headless" ]]; then
+    HELPER_HEADLESS=true
     shift
     HEADLESS_PALETTE_INDEX=""
     HEADLESS_FILES=()
@@ -143,6 +161,7 @@ if [[ "${1:-}" == "--headless" ]]; then
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --palette)
+                [[ $# -ge 2 && "$2" != --* ]] || helper_fail "Missing value for --palette"
                 HEADLESS_PALETTE_INDEX="$2"
                 shift 2
                 ;;
@@ -154,25 +173,37 @@ if [[ "${1:-}" == "--headless" ]]; then
                 done
                 ;;
             --out-dir)
+                [[ $# -ge 2 && "$2" != --* ]] || helper_fail "Missing value for --out-dir"
                 HEADLESS_OUT_DIR="$2"
                 shift 2
                 ;;
             *)
-                shift
+                helper_fail "Unknown option: $1"
                 ;;
         esac
     done
 
-    IDX=0
+    [[ -n "$HEADLESS_PALETTE_INDEX" ]] || helper_fail "--palette is required in --headless mode"
+    [[ -n "$HEADLESS_OUT_DIR" ]] || helper_fail "--out-dir is required in --headless mode"
+    (( ${#HEADLESS_FILES[@]} > 0 )) || helper_fail "--files requires at least one image path"
+    (( ${#PALETTES[@]} > 0 )) || helper_fail "No theme palettes discovered under $THEMES_DIR"
+
+    IDX=-1
     if [[ "$HEADLESS_PALETTE_INDEX" =~ ^[0-9]+$ ]]; then
-        IDX=$((HEADLESS_PALETTE_INDEX - 1))
+        if (( HEADLESS_PALETTE_INDEX >= 1 && HEADLESS_PALETTE_INDEX <= ${#PALETTES[@]} )); then
+            IDX=$((HEADLESS_PALETTE_INDEX - 1))
+        fi
     else
-        for i in "${!PALETTE_SLUGS[@]}"; do
-            if [[ "${PALETTE_SLUGS[$i]}" == "$HEADLESS_PALETTE_INDEX" || "${PALETTES[$i]%%|*}" == "$HEADLESS_PALETTE_INDEX" ]]; then
+        for i in "${!PALETTES[@]}"; do
+            if [[ "${PALETTE_SLUGS[$i]}" == "$HEADLESS_PALETTE_INDEX" || "${PALETTE_NAMES[$i]}" == "$HEADLESS_PALETTE_INDEX" || "${PALETTES[$i]%%|*}" == "$HEADLESS_PALETTE_INDEX" ]]; then
                 IDX=$i
                 break
             fi
         done
+    fi
+
+    if (( IDX < 0 || IDX >= ${#PALETTES[@]} )); then
+        helper_fail "Unknown palette '${HEADLESS_PALETTE_INDEX}'"
     fi
 
     PALETTE_DATA="${PALETTES[$IDX]}"
@@ -180,16 +211,18 @@ if [[ "${1:-}" == "--headless" ]]; then
     PALETTE_NAME="${PALETTE_DATA##*|}"
 
     MAX_JOBS=$(nproc 2>/dev/null || echo 4)
-    STATUS_FILE=$(mktemp /tmp/theming_status.XXXXXX)
+    STATUS_FILE="${WORK_TMP}/status.log"
+    : > "$STATUS_FILE"
     mkdir -p "$HEADLESS_OUT_DIR"
     running=0
+    job_seq=0
 
     for f in "${HEADLESS_FILES[@]}"; do
         if [[ -f "$f" ]]; then
             target_path=$(get_safe_target_path "$HEADLESS_OUT_DIR" "$f" "$PALETTE_SLUG")
-            touch "$target_path"
+            ((job_seq++)) || true
             (
-                if apply_lutgen "$PALETTE_SLUG" "$IDX" "$f" "$target_path" >/dev/null 2>&1; then
+                if apply_lutgen_atomic "$PALETTE_SLUG" "$IDX" "$f" "$target_path" "$job_seq" >/dev/null 2>&1; then
                     echo 0 >> "$STATUS_FILE"
                 else
                     echo 1 >> "$STATUS_FILE"
@@ -210,60 +243,21 @@ if [[ "${1:-}" == "--headless" ]]; then
     done
 
     COUNT=$(grep -c "^0$" "$STATUS_FILE" 2>/dev/null || true)
-    rm -f "$STATUS_FILE"
-
-    command -v notify-send >/dev/null 2>&1 && notify-send -a "${HELPER_TITLE}" "${HELPER_TITLE}" "Successfully themed $COUNT wallpaper(s) ($PALETTE_NAME)" || true
+    helper_notify normal "Successfully themed $COUNT wallpaper(s) ($PALETTE_NAME)"
     exit 0
 fi
-
-# ------------------------------------------------------------------------------
-# Floating Window Spawn Logic
-# ------------------------------------------------------------------------------
-# If not already running inside our dedicated floating window, calculate active
-# screen resolution (40% width x 40% height) and launch foot via hyprctl eval (hl. API)
-if [[ "${1:-}" != "--inner" ]]; then
-    SCRIPT_FILE=$(readlink -f "$0")
-
-    # Fetch active/focused monitor resolution dynamically
-    MON_INFO=$(hyprctl monitors -j 2>/dev/null || true)
-    WIDTH=$(echo "$MON_INFO" | jq -r '.[] | select(.focused == true) | .width // empty' 2>/dev/null || true)
-    if [[ -z "$WIDTH" ]]; then
-        WIDTH=$(echo "$MON_INFO" | jq -r '.[0].width // 1920' 2>/dev/null || true)
-        HEIGHT=$(echo "$MON_INFO" | jq -r '.[0].height // 1080' 2>/dev/null || true)
-        SCALE=$(echo "$MON_INFO" | jq -r '.[0].scale // 1.0' 2>/dev/null || true)
-    else
-        HEIGHT=$(echo "$MON_INFO" | jq -r '.[] | select(.focused == true) | .height // 1080' 2>/dev/null || true)
-        SCALE=$(echo "$MON_INFO" | jq -r '.[] | select(.focused == true) | .scale // 1.0' 2>/dev/null || true)
-    fi
-
-    # Dynamic 40% scaling (accounting for display scale)
-    TARGET_W=$(awk -v w="$WIDTH" -v s="$SCALE" 'BEGIN { printf "%d", (w / s) * 0.40 }')
-    TARGET_H=$(awk -v h="$HEIGHT" -v s="$SCALE" 'BEGIN { printf "%d", (h / s) * 0.40 }')
-    [[ "$TARGET_W" -lt 600 ]] && TARGET_W=600
-    [[ "$TARGET_H" -lt 380 ]] && TARGET_H=380
-
-    # Register rule and launch foot via Hyprland Lua eval API
-    if command -v hyprctl >/dev/null 2>&1 && pgrep -x Hyprland >/dev/null 2>&1; then
-        hyprctl eval "hl.window_rule({ match = { class = 'wallpaper-theming' }, float = true, center = true, size = '${TARGET_W} ${TARGET_H}' })" >/dev/null 2>&1 || true
-        hyprctl eval "hl.exec_cmd('foot -a wallpaper-theming -T \"${HELPER_TITLE}\" -w ${TARGET_W}x${TARGET_H} bash \"${SCRIPT_FILE}\" --inner')" >/dev/null 2>&1 || true
-        exit 0
-    fi
-fi
-
-# ------------------------------------------------------------------------------
-# Title Display (Clean left-aligned text, no wrapping)
-# ------------------------------------------------------------------------------
-print_title() {
-    echo ""
-    echo "  ${HELPER_ICON}  ${HELPER_TITLE}"
-    echo ""
-}
 
 # ------------------------------------------------------------------------------
 # Interactive Menu
 # ------------------------------------------------------------------------------
 clear 2>/dev/null || true
-print_title
+helper_print_title
+helper_enable_error_pause
+
+if (( ${#PALETTES[@]} == 0 )); then
+    helper_fail "No theme palettes discovered in ${THEMES_DIR}."
+fi
+
 echo "  Select Palette:"
 for i in "${!PALETTES[@]}"; do
     num=$((i + 1))
@@ -276,13 +270,12 @@ echo ""
 read -rp "  Choice [1-${#PALETTES[@]}]: " choice
 
 if [[ "$choice" =~ ^[qQ]$ ]]; then
-    echo "Exiting."
+    echo "  Exiting."
     exit 0
 fi
 
 if ! [[ "$choice" =~ ^[0-9]+$ ]] || (( choice < 1 || choice > ${#PALETTES[@]} )); then
-    echo "Invalid choice. Exiting."
-    exit 1
+    helper_fail "Invalid choice '${choice}'."
 fi
 
 SELECTED_IDX=$((choice - 1))
@@ -296,6 +289,13 @@ echo "  Opening file picker for input wallpapers..."
 # ------------------------------------------------------------------------------
 # File Picker (Zenity Multi-file)
 # ------------------------------------------------------------------------------
+if ! command -v zenity >/dev/null 2>&1; then
+    helper_fail "'zenity' is required for interactive file selection."
+fi
+if ! command -v lutgen >/dev/null 2>&1; then
+    helper_fail "'lutgen' is not installed or not in PATH."
+fi
+
 RAW_FILES=$(zenity --file-selection --multiple --separator="|" \
     --title="Wallpaper Theming - Select Wallpapers" \
     --filename="$HOME/Pictures/" \
@@ -303,7 +303,8 @@ RAW_FILES=$(zenity --file-selection --multiple --separator="|" \
     2>/dev/null || true)
 
 if [[ -z "$RAW_FILES" ]]; then
-    echo "No files selected. Cancelled."
+    echo "  No files selected. Cancelled."
+    helper_wait_for_q "  Press 'q' to close..."
     exit 0
 fi
 
@@ -321,7 +322,8 @@ DEST_DIR=$(zenity --file-selection --directory \
     2>/dev/null || true)
 
 if [[ -z "$DEST_DIR" ]]; then
-    echo "No destination directory selected. Cancelled."
+    echo "  No destination directory selected. Cancelled."
+    helper_wait_for_q "  Press 'q' to close..."
     exit 0
 fi
 
@@ -332,10 +334,11 @@ mkdir -p "$DEST_DIR"
 # ------------------------------------------------------------------------------
 TOTAL_FILES=${#INPUT_FILES[@]}
 MAX_JOBS=$(nproc 2>/dev/null || echo 4)
-STATUS_FILE=$(mktemp /tmp/theming_status.XXXXXX)
+STATUS_FILE="${WORK_TMP}/status.log"
+: > "$STATUS_FILE"
 
 clear 2>/dev/null || true
-print_title
+helper_print_title
 echo "  Theming $TOTAL_FILES wallpaper(s) with $SELECTED_NAME in parallel ($MAX_JOBS workers)..."
 echo "  Follow progress in the dialog window."
 echo ""
@@ -343,15 +346,17 @@ echo ""
 (
     running=0
     completed=0
+    job_seq=0
     for img in "${INPUT_FILES[@]}"; do
         if [[ ! -f "$img" ]]; then
+            ((completed++)) || true
             continue
         fi
 
         target_file=$(get_safe_target_path "$DEST_DIR" "$img" "$SELECTED_PALETTE")
-        touch "$target_file"
+        ((job_seq++)) || true
         (
-            if apply_lutgen "$SELECTED_PALETTE" "$SELECTED_IDX" "$img" "$target_file" >/dev/null 2>&1; then
+            if apply_lutgen_atomic "$SELECTED_PALETTE" "$SELECTED_IDX" "$img" "$target_file" "$job_seq" >/dev/null 2>&1; then
                 echo 0 >> "$STATUS_FILE"
             else
                 echo 1 >> "$STATUS_FILE"
@@ -385,8 +390,13 @@ echo ""
     --no-cancel 2>/dev/null || true
 
 SUCCESS_COUNT=$(grep -c "^0$" "$STATUS_FILE" 2>/dev/null || true)
-rm -f "$STATUS_FILE"
+FAIL_COUNT=$(grep -c "^1$" "$STATUS_FILE" 2>/dev/null || true)
 
-# Notify via notification daemon (Mako)
-notify-send -a "${HELPER_TITLE}" "${HELPER_TITLE}" "Successfully themed $SUCCESS_COUNT wallpaper(s) with $SELECTED_NAME" 2>/dev/null || true
-exit 0
+if (( FAIL_COUNT > 0 )); then
+    echo "  ⚠ Completed with ${SUCCESS_COUNT} succeeded and ${FAIL_COUNT} failed."
+    helper_notify normal "Themed ${SUCCESS_COUNT} wallpaper(s) (${FAIL_COUNT} failed)"
+else
+    echo "  ✅ Successfully themed ${SUCCESS_COUNT} wallpaper(s) with ${SELECTED_NAME}."
+    helper_notify normal "Successfully themed $SUCCESS_COUNT wallpaper(s) with $SELECTED_NAME"
+fi
+helper_wait_for_q "  Press 'q' to close..."

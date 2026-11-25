@@ -73,32 +73,32 @@ QtObject {
 
   readonly property QtObject bar: QtObject {
     property color background: root.composed("bar.background", "bar.background-alpha", root.background, 1.0)
-    property color text: root.pick("bar.text", root.foreground)
-    property color active: root.pick("bar.active", root.urgent)
+    property color text: root.flatColor(root.pick("bar.text", root.foreground), root.foreground)
+    property color active: root.flatColor(root.pick("bar.active", root.urgent), root.urgent)
   }
   readonly property QtObject popups: QtObject {
     property color background: root.composed("popups.background", "popups.background-alpha", root.background, 1.0)
-    property color text: root.pick("popups.text", root.foreground)
+    property color text: root.flatColor(root.pick("popups.text", root.foreground), root.foreground)
     property color border: root.composed("popups.border", "popups.border-alpha", root.accent, 1.0)
   }
   readonly property QtObject tooltip: QtObject {
     property color background: root.composed("tooltip.background", "tooltip.background-alpha", root.background, 1.0)
-    property color text: root.pick("tooltip.text", root.foreground)
+    property color text: root.flatColor(root.pick("tooltip.text", root.foreground), root.foreground)
     property color border: root.composed("tooltip.border", "tooltip.border-alpha", root.foreground, 1.0)
   }
   readonly property QtObject notifications: QtObject {
     property color background: root.composed("notifications.background", "notifications.background-alpha", root.background, 1.0)
-    property color text: root.pick("notifications.text", root.foreground)
+    property color text: root.flatColor(root.pick("notifications.text", root.foreground), root.foreground)
     property color border: root.composed("notifications.border", "notifications.border-alpha", root.accent, 1.0)
-    property color countdown: root.pick("notifications.countdown", root.accent)
+    property color countdown: root.flatColor(root.pick("notifications.countdown", root.accent), root.accent)
   }
   readonly property QtObject menu: QtObject {
     property color background: root.composed("menu.background", "menu.background-alpha", root.background, 1.0)
-    property color text: root.pick("menu.text", root.foreground)
+    property color text: root.flatColor(root.pick("menu.text", root.foreground), root.foreground)
     property color border: root.composed("menu.border", "menu.border-alpha", root.foreground, 1.0)
     property color scrim: root.composed("menu.scrim", "menu.scrim-alpha", root.background, 0.5)
     property color selectedBackground: root.composed("menu.selected-background", "menu.selected-background-alpha", root.foreground, 0.08)
-    property color selectedText: root.pick("menu.selected-text", root.accent)
+    property color selectedText: root.flatColor(root.pick("menu.selected-text", root.accent), root.accent)
     property color selectedBorder: root.composed("menu.selected-border", "menu.selected-border-alpha", root.foreground, 0.0)
   }
   // polkit + lock share a single border-alpha across border / border-active /
@@ -106,18 +106,18 @@ QtObject {
   // companion is enough.
   readonly property QtObject polkit: QtObject {
     property color background: root.composed("polkit.background", "polkit.background-alpha", root.background, 1.0)
-    property color text: root.pick("polkit.text", root.foreground)
-    property color textError: root.pick("polkit.text-error", root.urgent)
+    property color text: root.flatColor(root.pick("polkit.text", root.foreground), root.foreground)
+    property color textError: root.flatColor(root.pick("polkit.text-error", root.urgent), root.urgent)
     property color border: root.composed("polkit.border", "polkit.border-alpha", root.accent, 1.0)
     property color borderError: root.composed("polkit.border-error", "polkit.border-alpha", root.urgent, 1.0)
-    property color accent: root.pick("polkit.accent", root.accent)
+    property color accent: root.flatColor(root.pick("polkit.accent", root.accent), root.accent)
     property color scrim: root.composed("polkit.scrim", "polkit.scrim-alpha", root.background, 0.5)
   }
   readonly property QtObject lock: QtObject {
     property color background: root.composed("lock.background", "lock.background-alpha", root.background, 0.8)
-    property color text: root.pick("lock.text", root.foreground)
+    property color text: root.flatColor(root.pick("lock.text", root.foreground), root.foreground)
     property color placeholder: root.shellValues["lock.placeholder"] ? root.flatColor(root.shellValues["lock.placeholder"], Util.alpha(root.foreground, 0.66)) : Util.alpha(root.foreground, 0.66)
-    property color textError: root.pick("lock.text-error", root.urgent)
+    property color textError: root.flatColor(root.pick("lock.text-error", root.urgent), root.urgent)
     property color border: root.composed("lock.border", "lock.border-alpha", root.foreground, 1.0)
     property color borderActive: root.composed("lock.border-active", "lock.border-alpha", root.accent, 1.0)
     property color borderError: root.composed("lock.border-error", "lock.border-alpha", root.urgent, 1.0)

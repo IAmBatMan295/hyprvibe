@@ -11,12 +11,7 @@ hl.bind(mainMod .. " + V", hl.dsp.window.fullscreen({ mode = 0 }))
 hl.bind(mainMod .. " + Return", hl.dsp.exec_cmd(menu))
 hl.bind(mainMod .. " + D", hl.dsp.layout("togglesplit"))
 hl.bind(mainMod .. " + R", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.config/hypr/scripts/toggle-refresh.sh"))
-hl.bind(
-	mainMod .. " + B",
-	hl.dsp.exec_cmd(
-		"chromium --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding"
-	)
-)
+hl.bind(mainMod .. " + B", hl.dsp.exec_cmd("chromium"))
 hl.bind(mainMod .. " + N", hl.dsp.exec_cmd("foot --override=main.pad=0x0 --override=colors-dark.alpha=1.0 -e nvim"))
 hl.bind(mainMod .. " + W", hl.dsp.exec_cmd("quickshell ipc call hyprvibe.bar toggle"))
 hl.bind(mainMod .. " + SHIFT + T", hl.dsp.exec_cmd(os.getenv("HOME") .. "/HyprVibe/bin/hyprvibe-theme menu"))
@@ -24,13 +19,13 @@ hl.bind(mainMod .. " + SHIFT + T", hl.dsp.exec_cmd(os.getenv("HOME") .. "/HyprVi
 hl.bind(
 	"F12",
 	hl.dsp.exec_cmd(
-		[[mkdir -p ~/Pictures/Screenshots && grim -g "$(slurp)" - | wl-copy && wl-paste > ~/Pictures/Screenshots/Screenshot-$(date +%F_%T).png && notify-send "Screenshot" "Screenshot of the region taken" -t 1000]]
+		[[mkdir -p ~/Pictures/Screenshots && geom=$(slurp) && grim -g "$geom" - | tee ~/Pictures/Screenshots/Screenshot-$(date +%Y-%m-%d_%H-%M-%S).png | wl-copy && notify-send "Screenshot" "Screenshot of the region taken" -t 1000]]
 	)
 )
 hl.bind(
 	"SHIFT + F12",
 	hl.dsp.exec_cmd(
-		[[mkdir -p ~/Pictures/Screenshots && grim - | wl-copy && wl-paste > ~/Pictures/Screenshots/Screenshot-$(date +%F_%T).png && notify-send "Screenshot" "Screenshot of whole screen taken" -t 1000]]
+		[[mkdir -p ~/Pictures/Screenshots && grim - | tee ~/Pictures/Screenshots/Screenshot-$(date +%Y-%m-%d_%H-%M-%S).png | wl-copy && notify-send "Screenshot" "Screenshot of whole screen taken" -t 1000]]
 	)
 )
 
@@ -70,8 +65,12 @@ hl.bind("XF86AudioPlay", hl.dsp.exec_cmd("playerctl play-pause"), { locked = tru
 hl.bind("XF86AudioPrev", hl.dsp.exec_cmd("playerctl previous"), { locked = true })
 
 -- Switches
-hl.bind("switch:on:Lid Switch", hl.dsp.exec_cmd("sleep 0.5 && hyprctl dispatch 'hl.dsp.dpms(\"off\")'"), { locked = true })
-hl.bind("switch:off:Lid Switch", hl.dsp.exec_cmd("hyprctl dispatch 'hl.dsp.dpms(\"on\")'"), { locked = true })
+hl.bind("switch:on:Lid Switch", function()
+	hl.timer(function()
+		hl.dispatch(hl.dsp.dpms({ action = "off" }))
+	end, { timeout = 500, type = "oneshot" })
+end, { locked = true })
+hl.bind("switch:off:Lid Switch", hl.dsp.dpms({ action = "on" }), { locked = true })
 
 -- Helpers menu
 hl.bind(mainMod .. " + O", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.config/hypr/scripts/helpers-menu.sh"))

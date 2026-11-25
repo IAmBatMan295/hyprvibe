@@ -10,55 +10,25 @@ HELPER_TITLE="Local Image Generator"
 HELPER_ICON="󰋩"
 HELPER_ORDER=23
 
-# ------------------------------------------------------------------------------
-# Floating Window Spawn Logic (45% screen width x 48% height, centered)
-# ------------------------------------------------------------------------------
-IS_INNER=false
-for a in "$@"; do
-    case "$a" in
-        --inner|--headless|--status|--dry-run-cmd|--detect-type|--start|--stop|--restart|--generate)
-            IS_INNER=true
-            ;;
-    esac
-done
+REAL_SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
+ROOT_DIR="$(cd -- "$(dirname -- "${REAL_SCRIPT}")/../.." && pwd)"
+# shellcheck source=../lib/helper-ui.sh
+source "${ROOT_DIR}/bin/lib/helper-ui.sh"
 
-if [[ "$IS_INNER" == "false" ]]; then
-    SCRIPT_FILE=$(readlink -f "$0")
-
-    MON_INFO=$(hyprctl monitors -j 2>/dev/null || true)
-    WIDTH=$(echo "$MON_INFO" | jq -r '.[] | select(.focused == true) | .width // empty' 2>/dev/null || true)
-    if [[ -z "$WIDTH" ]]; then
-        WIDTH=$(echo "$MON_INFO" | jq -r '.[0].width // 1920' 2>/dev/null || true)
-        HEIGHT=$(echo "$MON_INFO" | jq -r '.[0].height // 1080' 2>/dev/null || true)
-        SCALE=$(echo "$MON_INFO" | jq -r '.[0].scale // 1.0' 2>/dev/null || true)
-    else
-        HEIGHT=$(echo "$MON_INFO" | jq -r '.[] | select(.focused == true) | .height // 1080' 2>/dev/null || true)
-        SCALE=$(echo "$MON_INFO" | jq -r '.[] | select(.focused == true) | .scale // 1.0' 2>/dev/null || true)
-    fi
-
-    TARGET_W=$(awk -v w="$WIDTH" -v s="$SCALE" 'BEGIN { printf "%d", (w / s) * 0.45 }')
-    TARGET_H=$(awk -v h="$HEIGHT" -v s="$SCALE" 'BEGIN { printf "%d", (h / s) * 0.48 }')
-    [[ "$TARGET_W" -lt 640 ]] && TARGET_W=640
-    [[ "$TARGET_H" -lt 400 ]] && TARGET_H=400
-
-    if command -v hyprctl >/dev/null 2>&1 && pgrep -x Hyprland >/dev/null 2>&1; then
-        hyprctl eval "hl.window_rule({ match = { class = 'sd-server-helper' }, float = true, center = true, size = '${TARGET_W} ${TARGET_H}' })" >/dev/null 2>&1 || true
-        hyprctl eval "hl.exec_cmd('foot -a sd-server-helper -T \"${HELPER_TITLE}\" -w ${TARGET_W}x${TARGET_H} bash \"${SCRIPT_FILE}\" --inner \"$@\"')" >/dev/null 2>&1 || true
-        exit 0
-    fi
-fi
+helper_maybe_spawn_window "$0" 0.45 0.48 640 400 "--inner --headless --status --detect-type --dry-run-cmd --list-models --model --start --stop --restart --generate" "$@"
 
 # ------------------------------------------------------------------------------
-# State & Configuration Paths
+# State & Configuration Paths (Read-only Stow defaults; mutable edits in XDG_STATE_HOME)
 # ------------------------------------------------------------------------------
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/sd-server"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/hyprvibe/sd-server"
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/sd-server"
-CONFIG_FILE="${CONFIG_DIR}/sd-server.conf"
+DEFAULT_CONFIG_FILE="${CONFIG_DIR}/sd-server.conf"
+CONFIG_FILE="${STATE_DIR}/config.conf"
 PID_FILE="${STATE_DIR}/sd-server.pid"
-LOG_FILE="${HOME}/sd-server.log"
+LOG_FILE="${STATE_DIR}/server.log"
 CURRENT_INFO_FILE="${STATE_DIR}/sd-server.current"
 
-mkdir -p "$STATE_DIR" "$CONFIG_DIR"
+mkdir -p "$STATE_DIR"
 
 MODELS_DIR="${HOME}/models/flux"
 OUTPUT_DIR="${HOME}/Pictures/Generated"
@@ -76,13 +46,48 @@ PORT=8090
 HOST="127.0.0.1"
 VAE_TILING="on"
 
-# Load persisted configuration if available
+# Load tracked defaults first, then user overrides from ~/.local/state
+if [[ -f "$DEFAULT_CONFIG_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$DEFAULT_CONFIG_FILE" 2>/dev/null || true
+fi
 if [[ -f "$CONFIG_FILE" ]]; then
     # shellcheck disable=SC1090
     source "$CONFIG_FILE" 2>/dev/null || true
 fi
 
+MODELS_DIR="${MODELS_DIR/#\~/$HOME}"
+OUTPUT_DIR="${OUTPUT_DIR/#\~/$HOME}"
+DIFFUSION_MODEL="${DIFFUSION_MODEL/#\~/$HOME}"
+VAE="${VAE/#\~/$HOME}"
+CLIP_L="${CLIP_L/#\~/$HOME}"
+T5XXL="${T5XXL/#\~/$HOME}"
+
 mkdir -p "$OUTPUT_DIR"
+
+check_vram_hint() {
+    local model_path="$1"
+    [[ -f "$model_path" ]] || return 0
+    local model_mb
+    model_mb=$(( $(stat -c%s "$model_path" 2>/dev/null || echo 0) / 1048576 ))
+    (( model_mb > 0 )) || return 0
+
+    local avail_vram_mb=0 drm_vram
+    for drm_vram in /sys/class/drm/card*/device/mem_info_vram_total; do
+        if [[ -r "$drm_vram" ]]; then
+            local bytes
+            bytes="$(cat "$drm_vram" 2>/dev/null || echo 0)"
+            if [[ "$bytes" =~ ^[0-9]+$ ]]; then
+                local mb=$(( bytes / 1048576 ))
+                (( mb > avail_vram_mb )) && avail_vram_mb="$mb"
+            fi
+        fi
+    done
+
+    if (( avail_vram_mb > 0 && model_mb > avail_vram_mb )); then
+        echo -e "  ${CLR_YELLOW}Note: Model (${model_mb} MiB) exceeds dedicated VRAM (${avail_vram_mb} MiB); enable VAE tiling or use GGUF quants.${CLR_RESET}"
+    fi
+}
 
 save_config() {
     local rel_models="${MODELS_DIR/#$HOME/\${HOME\}}"
@@ -204,6 +209,7 @@ find_models() {
             done < <(find "$sdir" -maxdepth 2 -type f \( -name "*.safetensors" -o -name "*.gguf" -o -name "*.ckpt" \) -print0 2>/dev/null)
         fi
     done
+    (( ${#found[@]} == 0 )) && return 0
     printf '%s\n' "${found[@]}" | sort -u
 }
 
@@ -248,6 +254,11 @@ build_cmd_args() {
 }
 
 start_server() {
+    if ! command -v sd-server >/dev/null 2>&1; then
+        echo "  ❌ Error: 'sd-server' binary not found in PATH." >&2
+        return 1
+    fi
+
     if is_running; then
         echo "  Server already running (PID: $(get_server_pid)). Stop or restart first."
         return 1
@@ -266,6 +277,7 @@ start_server() {
     echo "  Model:    $(basename "$target_model") (Profile: ${m_type^^})"
     echo "  Size:     ${WIDTH}x${HEIGHT} | Steps: ${STEPS} | CFG: ${CFG_SCALE}"
     echo "  Listen:   http://${HOST}:${PORT}"
+    check_vram_hint "$target_model"
 
     local extra_args=()
     if [[ "$VAE_TILING" == "on" ]]; then
@@ -359,21 +371,27 @@ stop_server() {
 
 generate_image() {
     local prompt="$1"
-    local timestamp
+    if ! command -v sd-cli >/dev/null 2>&1; then
+        echo "  ❌ Error: 'sd-cli' binary not found in PATH." >&2
+        return 1
+    fi
+    if [[ ! -f "$DIFFUSION_MODEL" ]]; then
+        echo "  ❌ Error: Model file does not exist: $DIFFUSION_MODEL" >&2
+        return 1
+    fi
+
+    local m_type timestamp out_file
+    m_type=$(detect_model_type "$DIFFUSION_MODEL")
     timestamp=$(date '+%Y%m%d_%H%M%S')
-    local out_file="${OUTPUT_DIR}/flux_${timestamp}.png"
+    out_file="${OUTPUT_DIR}/${m_type}_${timestamp}.png"
 
     echo ""
-    echo "  Generating image with FLUX.1..."
-    echo "  Prompt:  \"$prompt\""
-    echo "  Output:  $out_file"
-    local m_type
-    m_type=$(detect_model_type "$DIFFUSION_MODEL")
-
     echo "  Generating image with ${m_type^^}..."
+    echo "  Model:   $(basename "$DIFFUSION_MODEL")"
     echo "  Prompt:  \"$prompt\""
     echo "  Output:  $out_file"
     echo "  Size:    ${WIDTH}x${HEIGHT} | Steps: ${STEPS} | CFG: ${CFG_SCALE}"
+    check_vram_hint "$DIFFUSION_MODEL"
     echo ""
 
     local extra_args=()
@@ -430,9 +448,19 @@ while [[ $# -gt 0 ]]; do
             ACTION="status"
             shift
             ;;
+        --list-models)
+            ACTION="list-models"
+            shift
+            ;;
+        --model)
+            [[ $# -ge 2 && "$2" != --* ]] || { echo "Error: --model requires a path" >&2; exit 1; }
+            DIFFUSION_MODEL="${2/#\~/$HOME}"
+            shift 2
+            ;;
         --detect-type)
+            [[ $# -ge 2 && "$2" != --* ]] || { echo "Error: --detect-type requires a model path" >&2; exit 1; }
             ACTION="detect-type"
-            TARGET_ARG="${2:-}"
+            TARGET_ARG="$2"
             shift 2
             ;;
         --dry-run-cmd)
@@ -458,9 +486,14 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --generate)
+            [[ $# -ge 2 && "$2" != --* ]] || { echo "Error: --generate requires a prompt string" >&2; exit 1; }
             ACTION="generate"
-            PROMPT_ARG="${2:-}"
+            PROMPT_ARG="$2"
             shift 2
+            ;;
+        --headless)
+            HELPER_HEADLESS=true
+            shift
             ;;
         --inner)
             ACTION="inner"
@@ -481,6 +514,10 @@ if [[ -n "$ACTION" && "$ACTION" != "inner" ]]; then
             else
                 echo "stopped"
             fi
+            exit 0
+            ;;
+        list-models)
+            find_models
             exit 0
             ;;
         detect-type)
@@ -518,16 +555,8 @@ fi
 # ------------------------------------------------------------------------------
 # UI Helpers & Menu Loop
 # ------------------------------------------------------------------------------
-CLR_RESET="\033[0m"
-CLR_BOLD="\033[1m"
-CLR_GREEN="\033[32m"
-CLR_RED="\033[31m"
-CLR_YELLOW="\033[33m"
-CLR_CYAN="\033[36m"
-CLR_GRAY="\033[90m"
-
 print_header() {
-    clear
+    clear 2>/dev/null || true
     echo ""
     echo -e "  ${CLR_BOLD}${CLR_CYAN}${HELPER_ICON}  ${HELPER_TITLE}${CLR_RESET}"
     echo -e "  ${CLR_GRAY}──────────────────────────────────────────────────${CLR_RESET}"
@@ -548,6 +577,51 @@ print_header() {
     echo ""
 }
 
+select_model_menu() {
+    mapfile -t models < <(find_models)
+    if (( ${#models[@]} == 0 )); then
+        echo -e "  ${CLR_YELLOW}No diffusion models (.safetensors/.gguf/.ckpt) found.${CLR_RESET}"
+        echo "  Place model files into ~/models/flux/ or ~/models/sd/"
+        read -rp "  Press Enter to continue..." || true
+        return 1
+    fi
+
+    echo "  Available Models:"
+    for i in "${!models[@]}"; do
+        local num=$((i + 1))
+        local mpath="${models[$i]}"
+        local mname
+        mname=$(basename "$mpath")
+        local mtype
+        mtype=$(detect_model_type "$mpath")
+        if [[ "$mpath" == "$DIFFUSION_MODEL" ]]; then
+            echo -e "    ${CLR_GREEN}${num}) ${mname} [${mtype^^}] [active]${CLR_RESET}"
+        else
+            echo "    ${num}) ${mname} [${mtype^^}]"
+        fi
+    done
+    echo "    b) Back"
+    echo ""
+    read -rp "  Select model [1-${#models[@]}, b]: " choice || return 1
+
+    if [[ "$choice" =~ ^[bB]$ || -z "$choice" ]]; then
+        return 1
+    fi
+
+    if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#models[@]} )); then
+        local idx=$((choice - 1))
+        DIFFUSION_MODEL="${models[$idx]}"
+        apply_model_defaults "$DIFFUSION_MODEL"
+        save_config
+        echo "  ✔ Selected $(basename "$DIFFUSION_MODEL") and applied profile defaults."
+        return 0
+    fi
+
+    echo "  ❌ Invalid selection."
+    sleep 1
+    return 1
+}
+
 settings_menu() {
     while true; do
         print_header
@@ -559,15 +633,15 @@ settings_menu() {
         echo "    5) Output Directory: ${OUTPUT_DIR}"
         echo "    b) Back"
         echo ""
-        read -rp "  Choice [1-5, b]: " s_opt
+        read -rp "  Choice [1-5, b]: " s_opt || break
         case "$s_opt" in
             1)
                 echo ""
-                echo "    1) 1024x1024 (Standard FLUX)"
+                echo "    1) 1024x1024 (Standard FLUX / SDXL)"
                 echo "    2) 1280x768  (Landscape 16:9 approx)"
                 echo "    3) 768x1280  (Portrait)"
                 echo "    4) 768x768   (Faster)"
-                read -rp "  Select [1-4]: " r_opt
+                read -rp "  Select [1-4]: " r_opt || break
                 case "$r_opt" in
                     1) WIDTH=1024; HEIGHT=1024 ;;
                     2) WIDTH=1280; HEIGHT=768 ;;
@@ -577,13 +651,23 @@ settings_menu() {
                 save_config
                 ;;
             2)
-                read -rp "  Enter steps [default: 20]: " n_steps
-                [[ "$n_steps" =~ ^[0-9]+$ ]] && STEPS="$n_steps"
+                read -rp "  Enter steps [default: 26]: " n_steps || true
+                if [[ "$n_steps" =~ ^[1-9][0-9]*$ ]]; then
+                    STEPS="$n_steps"
+                elif [[ -n "$n_steps" ]]; then
+                    echo "  ❌ Invalid step count (must be a positive integer)."
+                    sleep 1
+                fi
                 save_config
                 ;;
             3)
-                read -rp "  Enter guidance scale [default: 3.5]: " n_guide
-                [[ -n "$n_guide" ]] && GUIDANCE="$n_guide"
+                read -rp "  Enter guidance scale [default: 3.5]: " n_guide || true
+                if [[ "$n_guide" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+                    GUIDANCE="$n_guide"
+                elif [[ -n "$n_guide" ]]; then
+                    echo "  ❌ Invalid guidance value (must be numeric)."
+                    sleep 1
+                fi
                 save_config
                 ;;
             4)
@@ -595,10 +679,15 @@ settings_menu() {
                 save_config
                 ;;
             5)
-                read -rp "  Enter output path: " n_out
-                [[ -n "$n_out" ]] && OUTPUT_DIR="$n_out"
-                mkdir -p "$OUTPUT_DIR"
-                save_config
+                read -rp "  Enter output path: " n_out || true
+                n_out="${n_out/#\~/$HOME}"
+                if [[ -n "$n_out" ]] && mkdir -p "$n_out" 2>/dev/null; then
+                    OUTPUT_DIR="$n_out"
+                    save_config
+                elif [[ -n "$n_out" ]]; then
+                    echo "  ❌ Cannot create output directory: $n_out"
+                    sleep 1
+                fi
                 ;;
             b|B|"")
                 break
@@ -614,55 +703,105 @@ while true; do
     if is_running; then
         echo "    2) Stop API / Web Server"
         echo "    3) Restart Server"
+        echo "    4) Open Generated Images Folder"
+        echo "    5) Configure Settings (Resolution, Steps, Guidance)"
+        echo "    6) View Last Server Logs"
     else
         echo "    2) Start API / Web Server (port ${PORT})"
+        echo "    3) Select Model & Apply Profile"
+        echo "    4) Open Generated Images Folder"
+        echo "    5) Configure Settings (Resolution, Steps, Guidance)"
+        echo "    6) View Last Server Logs"
     fi
-    echo "    3) Open Generated Images Folder"
-    echo "    4) Configure Settings (Resolution, Steps, Guidance)"
-    echo "    5) View Last Server Logs"
     echo "    q) Quit"
     echo ""
-    read -rp "  Choice: " opt
-    case "$opt" in
-        1)
-            echo ""
-            read -rp "  Enter prompt: " user_prompt
-            if [[ -n "$user_prompt" ]]; then
-                generate_image "$user_prompt"
-            fi
-            read -rp "  Press Enter to continue..."
-            ;;
-        2)
-            echo ""
-            if is_running; then
+    read -rp "  Choice: " opt || exit 0
+    if is_running; then
+        case "$opt" in
+            1)
+                echo ""
+                read -rp "  Enter prompt: " user_prompt || true
+                if [[ -n "$user_prompt" ]]; then
+                    generate_image "$user_prompt" || true
+                fi
+                read -rp "  Press Enter to continue..." || true
+                ;;
+            2)
+                echo ""
                 stop_server
-            else
-                start_server
-            fi
-            read -rp "  Press Enter to continue..."
-            ;;
-        3)
-            if is_running; then
+                read -rp "  Press Enter to continue..." || true
+                ;;
+            3)
+                echo ""
                 stop_server
-                start_server
-                read -rp "  Press Enter to continue..."
-            else
+                start_server || true
+                read -rp "  Press Enter to continue..." || true
+                ;;
+            4)
                 command -v xdg-open >/dev/null 2>&1 && xdg-open "$OUTPUT_DIR" >/dev/null 2>&1 &
-            fi
-            ;;
-        4)
-            settings_menu
-            ;;
-        5)
-            clear
-            echo -e "  ${CLR_CYAN}Streaming logs from ${LOG_FILE} (Ctrl+C to return)...${CLR_RESET}\n"
-            tail -n 60 -f "$LOG_FILE" || true
-            ;;
-        q|Q)
-            echo "Exiting."
-            exit 0
-            ;;
-        *)
-            ;;
-    esac
+                ;;
+            5)
+                settings_menu
+                ;;
+            6)
+                clear 2>/dev/null || true
+                echo -e "  ${CLR_CYAN}Streaming logs from ${LOG_FILE} (Ctrl+C to return)...${CLR_RESET}\n"
+                if [[ -f "$LOG_FILE" ]]; then
+                    tail -n 60 -f "$LOG_FILE" || true
+                else
+                    echo "  No log file found."
+                    read -rp "  Press Enter to continue..." || true
+                fi
+                ;;
+            q|Q)
+                echo "Exiting."
+                exit 0
+                ;;
+            *)
+                ;;
+        esac
+    else
+        case "$opt" in
+            1)
+                echo ""
+                read -rp "  Enter prompt: " user_prompt || true
+                if [[ -n "$user_prompt" ]]; then
+                    generate_image "$user_prompt" || true
+                fi
+                read -rp "  Press Enter to continue..." || true
+                ;;
+            2)
+                echo ""
+                start_server || true
+                read -rp "  Press Enter to continue..." || true
+                ;;
+            3)
+                echo ""
+                select_model_menu || true
+                ;;
+            4)
+                command -v xdg-open >/dev/null 2>&1 && xdg-open "$OUTPUT_DIR" >/dev/null 2>&1 &
+                ;;
+            5)
+                settings_menu
+                ;;
+            6)
+                clear 2>/dev/null || true
+                echo -e "  ${CLR_CYAN}Last logs from ${LOG_FILE} (Ctrl+C to return)...${CLR_RESET}\n"
+                if [[ -f "$LOG_FILE" ]]; then
+                    tail -n 60 "$LOG_FILE"
+                else
+                    echo "  No log file found."
+                fi
+                echo ""
+                read -rp "  Press Enter to continue..." || true
+                ;;
+            q|Q)
+                echo "Exiting."
+                exit 0
+                ;;
+            *)
+                ;;
+        esac
+    fi
 done

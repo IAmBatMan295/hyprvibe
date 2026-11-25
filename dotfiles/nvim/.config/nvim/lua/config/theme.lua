@@ -21,14 +21,18 @@ M.plugin_map = {
   ["forest-green"] = "forest-green",
 }
 
-function M.get_hyprvibe_theme()
-  local disk_theme = nil
+function M.read_disk_theme()
   if vim.fn.filereadable(M.theme_file) == 1 then
     local lines = vim.fn.readfile(M.theme_file)
     if #lines > 0 and lines[1] ~= "" then
-      disk_theme = vim.trim(lines[1])
+      return vim.trim(lines[1])
     end
   end
+  return nil
+end
+
+function M.get_hyprvibe_theme()
+  local disk_theme = M.read_disk_theme()
 
   -- Detect external system theme changes
   if disk_theme and disk_theme ~= M.last_state_theme then
@@ -41,6 +45,9 @@ function M.get_hyprvibe_theme()
 end
 
 function M.sync_terminal_bg()
+  if #vim.api.nvim_list_uis() == 0 then
+    return
+  end
   local normal_hl = vim.api.nvim_get_hl(0, { name = "Normal" })
   local bg = normal_hl.bg
   if bg then
@@ -48,8 +55,9 @@ function M.sync_terminal_bg()
     local g = bit.band(bit.rshift(bg, 8), 0xff)
     local b = bit.band(bg, 0xff)
     local osc11 = string.format("\x1b]11;rgb:%02x%02x/%02x%02x/%02x%02x\x1b\\", r, r, g, g, b, b)
+    local seq = os.getenv("TMUX") and ("\x1bPtmux;\x1b" .. osc11:gsub("\x1b", "\x1b\x1b") .. "\x1b\\") or osc11
     pcall(function()
-      io.stdout:write(osc11)
+      io.stdout:write(seq)
       io.stdout:flush()
     end)
   end
@@ -87,10 +95,10 @@ function M.apply_theme(name)
 
   M.sync_terminal_bg()
 
-  -- Live reload Lualine if already loaded
+  -- Live reload Lualine without wiping custom opts
   if package.loaded["lualine"] then
     pcall(function()
-      require("lualine").setup()
+      require("lualine").refresh()
     end)
   end
 end

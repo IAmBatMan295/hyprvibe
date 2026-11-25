@@ -18,7 +18,10 @@ case "${1:-}" in
     ;;
 esac
 
-battery=$(upower -e 2>/dev/null | grep BAT | head -n 1)
+battery=$(upower -e 2>/dev/null | grep -E '/battery_' | head -n 1)
+if [[ -z $battery ]]; then
+  battery=$(upower -e 2>/dev/null | grep -E 'BAT|CMB' | head -n 1)
+fi
 [[ -z $battery ]] && exit 0
 
 battery_info=$(upower -i "$battery")
@@ -90,7 +93,7 @@ fi
 }')
 
 if [[ -z $threshold_end ]]; then
-  for f in "$power_supply_path"/BAT*/charge_control_end_threshold; do
+  for f in "$power_supply_path"/*/charge_control_end_threshold; do
     if [[ -r $f ]]; then
       threshold_end=$(<"$f")
       break
@@ -103,18 +106,14 @@ if [[ -z $threshold_end ]]; then
       /sys/devices/platform/ideapad_acpi*/conservation_mode \
       /sys/devices/pci*/*/*/VPC2004:00/conservation_mode; do
       if [[ -r $candidate && $(<"$candidate") == "1" ]]; then
-        if (( ${percentage:-0} > 65 )); then
-          threshold_end=80
-        else
-          threshold_end=60
-        fi
+        threshold_end=60
         break
       fi
     done
   fi
 fi
 if [[ -z $threshold_start ]]; then
-  for f in "$power_supply_path"/BAT*/charge_control_start_threshold; do
+  for f in "$power_supply_path"/*/charge_control_start_threshold; do
     if [[ -r $f ]]; then
       threshold_start=$(<"$f")
       break
@@ -157,7 +156,7 @@ if [[ $shell_output == "true" ]]; then
   printf 'time\t%s\n' "$time_remaining"
 
   cycles=""
-  for f in "$power_supply_path"/BAT*/cycle_count; do
+  for f in "$power_supply_path"/*/cycle_count; do
     if [[ -r $f ]]; then
       cycles=$(<"$f")
       break
@@ -186,7 +185,15 @@ if [[ $charge_holding == "true" ]]; then
 
   echo "Battery ${percentage}%  ·  Holding at ${threshold_label}  ·  ${power_rate}W / ${capacity}Wh"
 elif [[ $state == "charging" ]]; then
-  echo "Battery ${percentage}%  ·  ${time_remaining} to full  ·   ${power_rate}W / ${capacity}Wh"
-else
+  if [[ -n $time_remaining ]]; then
+    echo "Battery ${percentage}%  ·  ${time_remaining} to full  ·   ${power_rate}W / ${capacity}Wh"
+  else
+    echo "Battery ${percentage}%  ·  Charging  ·   ${power_rate}W / ${capacity}Wh"
+  fi
+elif [[ $state == "fully-charged" ]]; then
+  echo "Battery ${percentage}%  ·  Fully charged  ·  ${capacity}Wh"
+elif [[ -n $time_remaining ]]; then
   echo "Battery ${percentage}%  ·  ${time_remaining} left  ·   ${power_rate}W / ${capacity}Wh"
+else
+  echo "Battery ${percentage}%  ·  ${power_rate}W / ${capacity}Wh"
 fi
