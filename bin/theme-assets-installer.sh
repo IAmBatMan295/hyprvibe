@@ -172,7 +172,7 @@ install_hyprvibe_sddm_once() {
     local sddm_dir="${ROOT_DIR}/dotfiles/sddm"
 
     if [[ ! -d "$source_theme_dir" ]]; then
-        log_error "HyprVibe SDDM theme source missing at ${source_theme_dir}"
+        log_error "hyprvibe SDDM theme source missing at ${source_theme_dir}"
         return 1
     fi
 
@@ -204,7 +204,7 @@ fontSize=13
 EOF
     fi
 
-    log_info "Installing HyprVibe SDDM theme to ${SDDM_SYS_THEME_DIR}..."
+    log_info "Installing hyprvibe SDDM theme to ${SDDM_SYS_THEME_DIR}..."
     sudo mkdir -p "$SDDM_SYS_THEME_DIR"
     sudo cp -a "${source_theme_dir}/." "${SDDM_SYS_THEME_DIR}/"
 
@@ -258,7 +258,7 @@ EOF
     fi
 
     # Install SDDM configuration drops
-    log_info "Configuring SDDM for Wayland and HyprVibe theme..."
+    log_info "Configuring SDDM for Wayland and hyprvibe theme..."
     sudo mkdir -p "$ETC_SDDM_CONF_DIR"
 
     if [[ -f "${sddm_dir}/10-wayland.conf" ]]; then
@@ -275,7 +275,7 @@ EOF
     sudo rm -f "${ETC_SDDM_CONF_DIR}/clockwork.conf" "${ETC_SDDM_CONF_DIR}/theme.conf" 2>/dev/null || true
     sudo rm -rf "$SDDM_LEGACY_CLOCKWORK_DIR" 2>/dev/null || true
 
-    log_success "HyprVibe SDDM theme installed and activated."
+    log_success "hyprvibe SDDM theme installed and activated."
     return 0
 }
 
@@ -287,7 +287,7 @@ main() {
     setup_colors
 
     run_with_retries "Install YAMIS icon theme" install_yamis_once verify_yamis_install || exit 1
-    run_with_retries "Install HyprVibe SDDM theme" install_hyprvibe_sddm_once verify_hyprvibe_sddm || exit 1
+    run_with_retries "Install hyprvibe SDDM theme" install_hyprvibe_sddm_once verify_hyprvibe_sddm || exit 1
     log_phase "Theme Assets Summary"
     log_success "Theme assets installation completed successfully."
 }

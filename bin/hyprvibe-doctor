@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# hyprvibe-doctor: Strictly read-only diagnostic health checker for HyprVibe.
+# hyprvibe-doctor: Strictly read-only diagnostic health checker for hyprvibe.
 # Checks symlinks, runtime packages, file permissions, repo cleanliness, and syntax
 # without modifying any project files or system state.
 
@@ -17,12 +17,12 @@ usage() {
   cat <<'EOF'
 Usage: hyprvibe-doctor [OPTIONS]
 
-Read-only health check for HyprVibe dotfiles, symlinks, packages, and permissions.
+Read-only health check for hyprvibe dotfiles, symlinks, packages, and permissions.
 
 Options:
   --home <dir>       Inspect a sandbox/custom home directory instead of $HOME
   --sddm-dir <dir>   Inspect a custom SDDM theme directory
-  --repo <dir>       Specify HyprVibe repository root
+  --repo <dir>       Specify hyprvibe repository root
   --no-pkg-query     Skip pacman/binary package availability checks
   -h, --help         Show this help message
 EOF
@@ -113,6 +113,21 @@ check_symlink_target() {
     else
       fail "BROKEN symlink: $link_path -> $(readlink "$link_path")"
     fi
+  elif [[ -d "$link_path" ]]; then
+    local dotfiles_real state_real stowed_count=0 link_item resolved_item
+    dotfiles_real="$(readlink -f "${REPO_ROOT}/dotfiles" 2>/dev/null || printf '%s' "${REPO_ROOT}/dotfiles")"
+    state_real="$(readlink -f "${TARGET_HOME}/.local/state/hyprvibe" 2>/dev/null || printf '%s' "${TARGET_HOME}/.local/state/hyprvibe")"
+    while IFS= read -r -d '' link_item; do
+      resolved_item="$(readlink -f "$link_item" 2>/dev/null || true)"
+      if [[ -n "$resolved_item" && ( "$resolved_item" == "${dotfiles_real}/"* || "$resolved_item" == "${state_real}/"* ) ]]; then
+        ((stowed_count++)) || true
+      fi
+    done < <(find "$link_path" -maxdepth 4 -type l -print0 2>/dev/null)
+    if (( stowed_count > 0 )); then
+      ok "$label stowed (--no-folding; $stowed_count linked file(s))"
+    else
+      warn "$label exists as a regular path (not stowed symlink): $link_path"
+    fi
   elif [[ -e "$link_path" ]]; then
     warn "$label exists as a regular path (not stowed symlink): $link_path"
   else
@@ -157,12 +172,12 @@ check_symlinks_and_state() {
     esac
     local target_dest
     target_dest="$(readlink "$broken_link" 2>/dev/null || true)"
-    if [[ "$target_dest" == *HyprVibe* || "$broken_link" == */hyprvibe* ]]; then
-      fail "BROKEN HyprVibe symlink: $broken_link -> $target_dest"
+    if [[ "${target_dest,,}" == *hyprvibe* || "${broken_link,,}" == */hyprvibe* ]]; then
+      fail "BROKEN hyprvibe symlink: $broken_link -> $target_dest"
     else
       warn "Broken third-party symlink: $broken_link -> $target_dest"
     fi
-  done < <(find "${TARGET_HOME}/.config" "${TARGET_HOME}/.local/bin" -maxdepth 3 -type l ! -exec test -e {} \; -print0 2>/dev/null)
+  done < <(find "${TARGET_HOME}/.config" "${TARGET_HOME}/.local/bin" -maxdepth 3 -name '*.hyprvibe_bak_*' -prune -o -type l ! -exec test -e {} \; -print0 2>/dev/null)
 
   local state_dir="${TARGET_HOME}/.local/state/hyprvibe/current"
   if [[ -d "$state_dir" ]]; then
@@ -262,7 +277,7 @@ check_permissions() {
 }
 
 main() {
-  printf "%sHyprVibe Doctor (Read-Only Diagnostic)%s\n" "$C_BOLD" "$C_RESET"
+  printf "%shyprvibe Doctor (Read-Only Diagnostic)%s\n" "$C_BOLD" "$C_RESET"
   check_repo
   check_symlinks_and_state
   check_packages

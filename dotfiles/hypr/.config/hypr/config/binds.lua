@@ -14,7 +14,7 @@ hl.bind(mainMod .. " + R", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.config/hypr/s
 hl.bind(mainMod .. " + B", hl.dsp.exec_cmd("chromium"))
 hl.bind(mainMod .. " + N", hl.dsp.exec_cmd("foot --override=main.pad=0x0 --override=colors-dark.alpha=1.0 -e nvim"))
 hl.bind(mainMod .. " + W", hl.dsp.exec_cmd("quickshell ipc call hyprvibe.bar toggle"))
-hl.bind(mainMod .. " + SHIFT + T", hl.dsp.exec_cmd(os.getenv("HOME") .. "/HyprVibe/bin/hyprvibe-theme menu"))
+hl.bind(mainMod .. " + SHIFT + T", hl.dsp.exec_cmd(os.getenv("HOME") .. "/hyprvibe/bin/hyprvibe-theme menu"))
 
 hl.bind(
 	"F12",

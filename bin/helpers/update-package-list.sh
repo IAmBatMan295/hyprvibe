@@ -34,7 +34,7 @@ helper_print_title
 helper_enable_error_pause
 
 if [[ "$AUTO_YES" != "true" ]]; then
-    echo "  Update pacman.txt & yay.txt in HyprVibe packages/?"
+    echo "  Update pacman.txt & yay.txt in hyprvibe packages/?"
     echo ""
     read -rp "  Proceed? [Y/n]: " response
     response="${response:-Y}"

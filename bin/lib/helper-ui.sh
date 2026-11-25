@@ -75,7 +75,7 @@ helper_maybe_spawn_window() {
         inner_args+=" $(printf '%q' "$_arg")"
     done
 
-    local title="${HELPER_TITLE:-HyprVibe Helper}"
+    local title="${HELPER_TITLE:-hyprvibe Helper}"
     local inner_cmd="foot -a hyprvibe-helper -T \"${title}\" -w ${target_w}x${target_h} bash \"${script_file}\" --inner${inner_args}"
     local inner_cmd_lua="${inner_cmd//\\/\\\\}"
     inner_cmd_lua="${inner_cmd_lua//\'/\\\'}"
@@ -86,7 +86,7 @@ helper_maybe_spawn_window() {
 
 helper_print_title() {
     echo ""
-    echo "  ${HELPER_ICON:-*}  ${HELPER_TITLE:-HyprVibe Helper}"
+    echo "  ${HELPER_ICON:-*}  ${HELPER_TITLE:-hyprvibe Helper}"
     echo ""
 }
 
@@ -94,7 +94,7 @@ helper_notify() {
     local urgency="$1"
     local message="$2"
     if command -v notify-send >/dev/null 2>&1; then
-        notify-send -u "$urgency" -a "${HELPER_TITLE:-HyprVibe}" "${HELPER_TITLE:-HyprVibe}" "$message" 2>/dev/null || true
+        notify-send -u "$urgency" -a "${HELPER_TITLE:-hyprvibe}" "${HELPER_TITLE:-hyprvibe}" "$message" 2>/dev/null || true
     fi
 }
 

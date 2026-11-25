@@ -395,7 +395,7 @@ configure_flatpak_themes() {
         return 0
     fi
 
-    log_info "Override flatpak to dark theme and HyprVibe state dir"
+    log_info "Override flatpak to dark theme and hyprvibe state dir"
     flatpak override --user --filesystem="${USER_HOME}/.themes"
     flatpak override --user --filesystem="${USER_HOME}/.icons"
     flatpak override --user --filesystem="${USER_HOME}/.local/share/themes"

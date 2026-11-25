@@ -121,7 +121,7 @@ fi
 
 HYPRVIBE_REPO_URL="${HYPRVIBE_REPO_URL:-https://github.com/IAmBatMan295/HyprVibe.git}"
 USER_HOME="$(resolve_user_home)"
-HYPRVIBE_TARGET_DIR="${USER_HOME}/HyprVibe"
+HYPRVIBE_TARGET_DIR="${USER_HOME}/hyprvibe"
 MODULES_DIR="$SCRIPT_DIR"
 INSTALL_LOG_FILE="${USER_HOME}/hyprvibe-log.txt"
 SUDO_KEEPALIVE_PID=""
@@ -176,7 +176,7 @@ cleanup_clone_temp() {
 ensure_cachyos() {
     local os_release_file="${OS_RELEASE_FILE:-/etc/os-release}"
     if [[ ! -f "$os_release_file" ]]; then
-        log_error "${os_release_file} not found. HyprVibe requires CachyOS."
+        log_error "${os_release_file} not found. hyprvibe requires CachyOS."
         exit 1
     fi
 
@@ -190,7 +190,7 @@ ensure_cachyos() {
 
     if [[ "$os_id" != "cachyos" && "$os_id_like" != *"cachyos"* ]]; then
         log_error "Unsupported distribution: ${os_pretty_name:-Linux}."
-        log_error "HyprVibe is strictly built and configured for CachyOS."
+        log_error "hyprvibe is strictly built and configured for CachyOS."
         exit 1
     fi
 }
@@ -229,7 +229,7 @@ enforce_repo_location() {
     local invoked_root=""
     if invoked_root="$(detect_invoked_repo_root)"; then
         if [[ "$invoked_root" != "$resolved_target" ]]; then
-            log_error "HyprVibe must be installed from ${resolved_target} (currently running from ${invoked_root})."
+            log_error "hyprvibe must be installed from ${resolved_target} (currently running from ${invoked_root})."
             log_info "Move your repository to ${resolved_target} and re-run:"
             printf '  mv "%s" "%s" && bash "%s/bin/install.sh"\n' "$invoked_root" "$resolved_target" "$resolved_target" >&2
             return 1
@@ -251,8 +251,8 @@ validate_target_dir() {
         exit 1
     fi
 
-    if [[ "$resolved_target" != "${resolved_home}/HyprVibe" ]]; then
-        log_error "Installer target is fixed to ${resolved_home}/HyprVibe"
+    if [[ "$resolved_target" != "${resolved_home}/hyprvibe" ]]; then
+        log_error "Installer target is fixed to ${resolved_home}/hyprvibe"
         exit 1
     fi
 }
@@ -268,7 +268,7 @@ refresh_hyprvibe_clone() {
     if [[ -d "$HYPRVIBE_TARGET_DIR" ]]; then
         if git -C "$HYPRVIBE_TARGET_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
             log_phase "Repository Check"
-            log_info "Existing HyprVibe repository detected at ${HYPRVIBE_TARGET_DIR}."
+            log_info "Existing hyprvibe repository detected at ${HYPRVIBE_TARGET_DIR}."
             log_info "Pulling latest updates..."
             if git -C "$HYPRVIBE_TARGET_DIR" pull --rebase; then
                 log_success "Repository updated successfully."
@@ -297,10 +297,10 @@ refresh_hyprvibe_clone() {
 
     trap 'cleanup_clone_temp; exit 1' INT TERM
 
-    local cloned_repo_dir="${CLONE_TMP_DIR}/HyprVibe"
+    local cloned_repo_dir="${CLONE_TMP_DIR}/hyprvibe"
 
     log_phase "Bootstrap Repository"
-    log_info "Cloning fresh HyprVibe copy from ${HYPRVIBE_REPO_URL}"
+    log_info "Cloning fresh hyprvibe copy from ${HYPRVIBE_REPO_URL}"
     if ! git clone "$HYPRVIBE_REPO_URL" "$cloned_repo_dir"; then
         cleanup_clone_temp
         log_error "Failed to clone ${HYPRVIBE_REPO_URL}"
@@ -436,7 +436,7 @@ STEP_WARNINGS=()
 STEP_SKIPPED=()
 
 print_installer_banner() {
-    print_tui_box "HyprVibe OS Installer - CachyOS + Hyprland" \
+    print_tui_box "hyprvibe OS Installer - CachyOS + Hyprland" \
         "Target Repo : ${HYPRVIBE_TARGET_DIR}" \
         "Install Log : ${INSTALL_LOG_FILE}"
 }
@@ -506,7 +506,7 @@ confirm_installation_preflight() {
     fi
 
     local answer=""
-    if ! read_from_tty "Proceed with HyprVibe installation? [Y/n]: " answer; then
+    if ! read_from_tty "Proceed with hyprvibe installation? [Y/n]: " answer; then
         log_error "Interactive input unavailable for confirmation."
         return 1
     fi
@@ -546,12 +546,12 @@ print_install_summary() {
         lines+=("  [SKIP] ${item}")
     done
 
-    print_tui_box "HyprVibe Installation Summary" "${lines[@]}"
+    print_tui_box "hyprvibe Installation Summary" "${lines[@]}"
 }
 
 prompt_reboot_if_requested() {
     if [[ "$HYPRVIBE_AUTO_YES" == "true" ]]; then
-        log_info "Skipping automatic reboot under --yes. Reboot manually before logging into HyprVibe."
+        log_info "Skipping automatic reboot under --yes. Reboot manually before logging into hyprvibe."
         return 0
     fi
 
@@ -566,7 +566,7 @@ prompt_reboot_if_requested() {
             sudo systemctl reboot
             ;;
         *)
-            log_info "Remember to reboot before starting your first HyprVibe session."
+            log_info "Remember to reboot before starting your first hyprvibe session."
             ;;
     esac
 }

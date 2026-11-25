@@ -140,7 +140,7 @@ format_hl_monitor_rule() {
 }
 
 get_active_monitor_scale() {
-    local repo_root="${1:-$HOME/HyprVibe}"
+    local repo_root="${1:-$HOME/hyprvibe}"
     local user_monitors="${repo_root}/dotfiles/hypr/.config/hypr/config/monitors.lua"
     if [[ ! -f "$user_monitors" && -f "${HOME}/.config/hypr/config/monitors.lua" ]]; then
         user_monitors="${HOME}/.config/hypr/config/monitors.lua"
@@ -163,7 +163,7 @@ get_active_monitor_scale() {
 }
 
 ensure_monitors_config() {
-    local repo_root="${1:-$HOME/HyprVibe}"
+    local repo_root="${1:-$HOME/hyprvibe}"
     local target_file="${repo_root}/dotfiles/hypr/.config/hypr/config/monitors.lua"
     local template_file="${repo_root}/templates/hypr/monitors.lua.template"
 
@@ -204,7 +204,7 @@ EOF
 }
 
 sync_sddm_compositor_config() {
-    local repo_root="${1:-$HOME/HyprVibe}"
+    local repo_root="${1:-$HOME/hyprvibe}"
     local target_file="${2:-$SDDM_HYPRLAND_SYS}"
 
     local rules_block="" mon_name width height refresh scale bitdepth
@@ -284,6 +284,6 @@ EOF
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    ensure_monitors_config "${1:-$HOME/HyprVibe}"
+    ensure_monitors_config "${1:-$HOME/hyprvibe}"
 fi
 

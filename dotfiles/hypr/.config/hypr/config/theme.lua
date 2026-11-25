@@ -97,7 +97,7 @@ if not f then
 
 	local candidates = {
 		repo_bin,
-		home .. "/HyprVibe/bin/hyprvibe-theme",
+		home .. "/hyprvibe/bin/hyprvibe-theme",
 		home .. "/.local/bin/hyprvibe-theme",
 		"hyprvibe-theme",
 	}

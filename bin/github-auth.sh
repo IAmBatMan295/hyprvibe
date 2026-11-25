@@ -227,7 +227,7 @@ write_ssh_config() {
 	chmod 600 "$SSH_CONFIG"
 
 	if grep -Fq "$start_marker" "$SSH_CONFIG"; then
-		log_info "Existing HyprVibe SSH block detected in ${SSH_CONFIG}. Replacing it."
+		log_info "Existing hyprvibe SSH block detected in ${SSH_CONFIG}. Replacing it."
 		local tmp_config
 		tmp_config="$(mktemp)"
 		awk -v start="$start_marker" -v end="$end_marker" -v block="$block" '
@@ -237,18 +237,18 @@ write_ssh_config() {
 		' "$SSH_CONFIG" > "$tmp_config"
 		mv "$tmp_config" "$SSH_CONFIG"
 		chmod 600 "$SSH_CONFIG"
-		log_success "Replaced HyprVibe SSH block in ${SSH_CONFIG}."
+		log_success "Replaced hyprvibe SSH block in ${SSH_CONFIG}."
 	elif grep -qiE '^[[:space:]]*Host[[:space:]]+([^#]*[[:space:]])?github\.com([[:space:]]|$)' "$SSH_CONFIG"; then
 		log_warn "Custom 'Host github.com' entry already exists in ${SSH_CONFIG}; leaving it untouched to preserve user SSH routing."
 	else
-		log_info "Appending HyprVibe SSH block to ${SSH_CONFIG}."
+		log_info "Appending hyprvibe SSH block to ${SSH_CONFIG}."
 		if [[ -s "$SSH_CONFIG" ]]; then
 			printf '\n%s\n' "$block" >> "$SSH_CONFIG"
 		else
 			printf '%s\n' "$block" >> "$SSH_CONFIG"
 		fi
 		chmod 600 "$SSH_CONFIG"
-		log_success "Added HyprVibe SSH block to ${SSH_CONFIG}."
+		log_success "Added hyprvibe SSH block to ${SSH_CONFIG}."
 	fi
 }
 
