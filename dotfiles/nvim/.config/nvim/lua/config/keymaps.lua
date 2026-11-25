@@ -33,6 +33,11 @@ vim.keymap.set("n", "<leader>5", function()
   vim.notify("Switched to Forest Green theme", vim.log.levels.INFO)
 end, { desc = "Switch to Forest Green theme" })
 
+vim.keymap.set("n", "<leader>6", function()
+  theme.apply_theme("iron-man")
+  vim.notify("Switched to Ashen (Iron Man) theme", vim.log.levels.INFO)
+end, { desc = "Switch to Iron Man theme" })
+
 local _term_root = nil
 
 vim.api.nvim_create_autocmd("DirChanged", {

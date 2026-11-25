@@ -1044,7 +1044,18 @@ Item {
     var target = moduleClickTargetAt(slot, localX, localY)
     if (!target) return false
 
-    target.triggerPress(button)
+    if (typeof target.triggerPressAt === "function") {
+      var mappedX = localX
+      var mappedY = localY
+      try {
+        var pt = slot.mapToItem(target, localX, localY)
+        mappedX = pt.x
+        mappedY = pt.y
+      } catch (e) {}
+      target.triggerPressAt(button, mappedX, mappedY)
+    } else {
+      target.triggerPress(button)
+    }
     return true
   }
 
@@ -1396,14 +1407,22 @@ Item {
         CenterModules { anchors.fill: parent }
 
         LeftModules {
+          id: leftModules
           anchors.left: parent.left
-          anchors.leftMargin: Style.space(8)
+          // Dynamic border alignment: keep every widget's own symmetric
+          // horizontal padding intact, and shift the bar's inner region margin
+          // by (Style.windowInnerInset - outermost widget's barEdgeInset) so
+          // the left wrap/content edge aligns with Hyprland's inner window border (gaps_out + border_size).
+          anchors.leftMargin: Math.round(Style.windowInnerInset - leftModules.firstVisibleEdgeInset)
           anchors.verticalCenter: parent.verticalCenter
         }
 
         RightModules {
+          id: rightModules
           anchors.right: parent.right
-          anchors.rightMargin: Style.space(8)
+          // Symmetric dynamic compensation on the right so the rightmost icon's
+          // visual edge aligns with Hyprland's right inner window border (gaps_out + border_size).
+          anchors.rightMargin: Math.round(Style.windowInnerInset - rightModules.lastVisibleEdgeInset)
           anchors.verticalCenter: parent.verticalCenter
         }
       }
@@ -1624,6 +1643,27 @@ Item {
 
     property var entries: []
     property string region: ""
+
+    // Inspect the first/last actually visible ModuleSlot inside this region
+    // so reordering or hiding modules in shell.json automatically updates the
+    // outer bar edge offset against Style.gapsOut.
+    function edgeInsetForEdge(fromEnd) {
+      if (!item) return 0
+      var children = item.children
+      var start = fromEnd ? children.length - 1 : 0
+      var step = fromEnd ? -1 : 1
+      for (var i = start; fromEnd ? (i >= 0) : (i < children.length); i += step) {
+        var slot = children[i]
+        if (!slot || slot.moduleName === undefined || !slot.visible || slot.width <= 0) continue
+        var active = slot.activeItem
+        if (!active || active.visible === false || active.opacity === 0) continue
+        return ("barEdgeInset" in active) ? (Number(active.barEdgeInset) || 0) : 0
+      }
+      return 0
+    }
+
+    readonly property real firstVisibleEdgeInset: edgeInsetForEdge(false)
+    readonly property real lastVisibleEdgeInset: edgeInsetForEdge(true)
 
     visible: entries.length > 0
     // A hidden list must not build its modules. The center section declares

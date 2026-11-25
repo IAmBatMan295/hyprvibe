@@ -19,6 +19,9 @@ WidgetButton {
   fontSize: Style.bar.iconFont
   fixedWidth: vertical ? -1 : slotSize
   fixedHeight: vertical ? slotSize : -1
+  // Report true painted glyph/canvas width to WidgetButton.barEdgeInset so
+  // Bar.qml aligns outer bar icons cleanly with Hyprland's window border.
+  contentVisualWidth: glyphPaintedWidth > 0 ? glyphPaintedWidth : opticalSize
 
   Item {
     id: opticalCanvas

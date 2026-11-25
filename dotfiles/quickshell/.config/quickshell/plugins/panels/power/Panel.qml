@@ -119,6 +119,10 @@ Panel {
 
   onBatteryPresentChanged: if (!batteryPresent) close()
 
+  // Expose button's right padding so Bar.qml aligns the battery/power icon
+  // with Hyprland's right window border without breaking internal spacing.
+  readonly property real barEdgeInset: button.barEdgeInset
+
   visible: batteryPresent
   implicitWidth: batteryPresent ? button.implicitWidth : 0
   implicitHeight: batteryPresent ? button.implicitHeight : 0

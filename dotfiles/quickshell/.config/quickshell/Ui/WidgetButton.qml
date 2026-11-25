@@ -71,6 +71,11 @@ Item {
   // Width of the painted label, for bar chrome that wants to line up with the
   // text rather than with the slot it sits in. Zero on icon-only buttons.
   readonly property real labelWidth: label.visible ? label.implicitWidth : 0
+  // Painted content width inside this button; subclasses like BarIconButton
+  // bind their optical glyph/canvas width so barEdgeInset measures true inner
+  // padding from widget edge to painted content for Bar.qml edge alignment.
+  property real contentVisualWidth: labelVisible ? label.implicitWidth : 0
+  readonly property real barEdgeInset: Math.max(0, (width - contentVisualWidth) / 2)
 
   visible: hasVisualContent || keepSpace
   opacity: !hasVisualContent || concealed ? 0 : (dimmed ? 0.45 : 1)

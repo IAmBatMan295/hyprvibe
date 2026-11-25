@@ -30,6 +30,10 @@ QtObject {
 
   property int cornerRadius: 0
   property int gapsOut: 5
+  property int borderSize: 2
+  // Distance from screen edge to the inner edge of Hyprland's window border.
+  // Bar.qml aligns outermost bar modules here so they sit flush with window content.
+  readonly property int windowInnerInset: gapsOut + borderSize
 
   // ---------------------------------------------------------- state tokens
   //
@@ -350,20 +354,32 @@ QtObject {
   function refresh() {
     hyprctlProc.running = true
     gapsOutProc.running = true
+    borderSizeProc.running = true
   }
 
   function scheduleRefresh() {
     refreshTimer.restart()
   }
 
-  function applyRoundingJson(raw) {
+  function parseIntOptionJson(raw) {
     try {
       var json = JSON.parse(raw || "{}")
       var n = Number(json.int)
-      if (isFinite(n) && n >= 0) cornerRadius = n
+      return (isFinite(n) && n >= 0) ? n : null
     } catch (e) {
       // hyprctl missing / Hyprland not running — leave the previous value.
+      return null
     }
+  }
+
+  function applyRoundingJson(raw) {
+    var n = parseIntOptionJson(raw)
+    if (n !== null) cornerRadius = n
+  }
+
+  function applyBorderSizeJson(raw) {
+    var n = parseIntOptionJson(raw)
+    if (n !== null) borderSize = n
   }
 
   function applyGapsOutJson(raw) {
@@ -454,6 +470,15 @@ QtObject {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root.applyGapsOutJson(text)
+    }
+  }
+
+  property Process borderSizeProc: Process {
+    id: borderSizeProc
+    command: ["hyprctl", "-j", "getoption", "general:border_size"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.applyBorderSizeJson(text)
     }
   }
 

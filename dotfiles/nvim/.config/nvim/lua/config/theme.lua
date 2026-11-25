@@ -8,6 +8,7 @@ M.last_state_theme = nil
 M.theme_map = {
   ["catppuccin"] = "catppuccin-mocha",
   ["monochrome"] = "immortal",
+  ["iron-man"] = "ashen",
   ["everforest"] = "everforest",
   ["gruvbox"] = "gruvbox",
   ["forest-green"] = "forest-green",
@@ -16,6 +17,7 @@ M.theme_map = {
 M.plugin_map = {
   ["catppuccin-mocha"] = "catppuccin",
   ["immortal"] = "black-metal",
+  ["ashen"] = "ashen",
   ["everforest"] = "everforest",
   ["gruvbox"] = "gruvbox",
   ["forest-green"] = "forest-green",
@@ -82,7 +84,7 @@ function M.apply_theme(name)
     vim.g.everforest_better_performance = 1
   elseif cs == "immortal" then
     pcall(function()
-      require("black-metal").setup({ theme = "immortal", variant = "dark", transparent = false })
+      require("black-metal").setup({ theme = cs, variant = "dark", transparent = false })
     end)
   elseif cs == "catppuccin-mocha" or cs == "catppuccin" then
     vim.g.catppuccin_flavour = "mocha"

@@ -57,6 +57,15 @@ return {
               return theme
             end
           end
+        elseif cs == "ashen" then
+          local ok_reg, ashen_plugins = pcall(require, "ashen.plugins")
+          if ok_reg and ashen_plugins.register_loaders then
+            pcall(ashen_plugins.register_loaders)
+          end
+          local ok, ashen_ll = pcall(require, "ashen.plugins.lualine")
+          if ok and ashen_ll.theme then
+            return ashen_ll.theme
+          end
         end
         return "auto"
       end

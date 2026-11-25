@@ -21,62 +21,95 @@ BarWidget {
     return "MPD"
   }
 
-  implicitWidth: row.implicitWidth
+  // Expose marquee's inner horizontal padding so Bar.qml aligns the wrap
+  // boundary with Hyprland's left window border without breaking symmetry.
+  readonly property real barEdgeInset: marquee.barEdgeInset
+
+  implicitWidth: marquee.implicitWidth
   implicitHeight: root.bar ? root.bar.barSize : Style.bar.sizeHorizontal
 
-  RowLayout {
-    id: row
+  MarqueeButton {
+    id: marquee
     anchors.fill: parent
-    spacing: 0
+    bar: root.bar
+    text: root.currentTooltip
+    tooltipText: root.currentTooltip
+    fontSize: Style.font.body
+    fixedWidth: root.setting("width", 140)
+    fixedHeight: root.bar ? root.bar.barSize : Style.bar.sizeHorizontal
+    horizontalMargin: 8
+    dimmed: !root.isPlaying
+    splitDoubleClick: true
+    onSingleClicked: Telemetry.triggerMediaAction("toggle")
+    onDoubleClickedLeft: Telemetry.triggerMediaAction("prev")
+    onDoubleClickedRight: Telemetry.triggerMediaAction("next")
+  }
 
-    WidgetButton {
-      id: prevBtn
-      bar: root.bar
-      text: "󰒮"
-      foreground: ThemeColor.muted
-      tooltipText: root.currentTooltip
-      fontSize: Style.font.body
-      horizontalMargin: 4
-      verticalPadding: 2
-      fixedHeight: root.bar ? root.bar.barSize : Style.bar.sizeHorizontal
-      onPressed: function() { Telemetry.triggerMediaAction("prev") }
-    }
+  // DORMANT FALLBACK: kept inactive and unused across project; active widget is MarqueeButton above.
+  Loader {
+    id: fallbackControlsLoader
+    active: false
+    visible: false
+    enabled: false
+    sourceComponent: fallbackControlsComponent
+  }
 
-    WidgetButton {
-      id: toggleBtn
-      bar: root.bar
-      text: root.isPlaying ? "󰏤" : "󰐊"
-      foreground: ThemeColor.muted
-      tooltipText: root.currentTooltip
-      fontSize: Style.font.body
-      horizontalMargin: 4
-      verticalPadding: 2
-      fixedHeight: root.bar ? root.bar.barSize : Style.bar.sizeHorizontal
-      onPressed: function() { Telemetry.triggerMediaAction("toggle") }
-    }
+  Component {
+    id: fallbackControlsComponent
 
-    WidgetButton {
-      id: nextBtn
-      bar: root.bar
-      text: "󰒭"
-      foreground: ThemeColor.muted
-      tooltipText: root.currentTooltip
-      fontSize: Style.font.body
-      horizontalMargin: 4
-      verticalPadding: 2
-      fixedHeight: root.bar ? root.bar.barSize : Style.bar.sizeHorizontal
-      onPressed: function() { Telemetry.triggerMediaAction("next") }
-    }
+    RowLayout {
+      id: fallbackRow
+      spacing: 0
 
-    Text {
-      id: sep
-      text: "|"
-      color: ThemeColor.muted
-      font.family: root.bar ? root.bar.fontFamily : Style.font.family
-      font.pixelSize: Style.font.body
-      Layout.alignment: Qt.AlignVCenter
-      Layout.leftMargin: 6
-      Layout.rightMargin: 6
+      WidgetButton {
+        id: prevBtn
+        bar: root.bar
+        text: "󰒮"
+        foreground: ThemeColor.muted
+        tooltipText: root.currentTooltip
+        fontSize: Style.font.body
+        horizontalMargin: 4
+        verticalPadding: 2
+        fixedHeight: root.bar ? root.bar.barSize : Style.bar.sizeHorizontal
+        onPressed: function() { Telemetry.triggerMediaAction("prev") }
+      }
+
+      WidgetButton {
+        id: toggleBtn
+        bar: root.bar
+        text: root.isPlaying ? "󰏤" : "󰐊"
+        foreground: ThemeColor.muted
+        tooltipText: root.currentTooltip
+        fontSize: Style.font.body
+        horizontalMargin: 4
+        verticalPadding: 2
+        fixedHeight: root.bar ? root.bar.barSize : Style.bar.sizeHorizontal
+        onPressed: function() { Telemetry.triggerMediaAction("toggle") }
+      }
+
+      WidgetButton {
+        id: nextBtn
+        bar: root.bar
+        text: "󰒭"
+        foreground: ThemeColor.muted
+        tooltipText: root.currentTooltip
+        fontSize: Style.font.body
+        horizontalMargin: 4
+        verticalPadding: 2
+        fixedHeight: root.bar ? root.bar.barSize : Style.bar.sizeHorizontal
+        onPressed: function() { Telemetry.triggerMediaAction("next") }
+      }
+
+      Text {
+        id: sep
+        text: "|"
+        color: ThemeColor.muted
+        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        font.pixelSize: Style.font.body
+        Layout.alignment: Qt.AlignVCenter
+        Layout.leftMargin: 6
+        Layout.rightMargin: 6
+      }
     }
   }
 }

@@ -7,6 +7,7 @@ BorderSurface 1.0 BorderSurface.qml
 Button 1.0 Button.qml
 CursorSurface 1.0 CursorSurface.qml
 KeyboardPanel 1.0 KeyboardPanel.qml
+MarqueeButton 1.0 MarqueeButton.qml
 OpticalGlyph 1.0 OpticalGlyph.qml
 Panel 1.0 Panel.qml
 PanelActionButton 1.0 PanelActionButton.qml
