@@ -12,4 +12,21 @@
 	<startup-notify/>
 	<directories/>
 </action>
+<action>
+	<icon>localsend</icon>
+	<name>Send via LocalSend</name>
+	<submenu></submenu>
+	<unique-id>localsend-send-action</unique-id>
+	<command>localsend %F</command>
+	<description>Send selected files or folders via LocalSend</description>
+	<range></range>
+	<patterns>*</patterns>
+	<startup-notify/>
+	<directories/>
+	<audio-files/>
+	<image-files/>
+	<other-files/>
+	<text-files/>
+	<video-files/>
+</action>
 </actions>

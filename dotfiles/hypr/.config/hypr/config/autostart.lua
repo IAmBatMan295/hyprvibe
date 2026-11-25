@@ -6,6 +6,7 @@ hl.on("hyprland.start", function()
     hl.exec_cmd("dunst &")
     hl.exec_cmd("hyprsunset &")
     hl.exec_cmd(os.getenv("HOME") .. "/.config/hypr/scripts/battery.sh &")
+    hl.exec_cmd("localsend --hidden &")
     
     -- Clipboard Manager
     hl.exec_cmd("wl-paste --type text --watch cliphist store")
