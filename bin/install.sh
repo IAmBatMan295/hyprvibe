@@ -119,7 +119,7 @@ else
     }
 fi
 
-HYPRVIBE_REPO_URL="${HYPRVIBE_REPO_URL:-https://github.com/IAmBatMan295/HyprVibe.git}"
+HYPRVIBE_REPO_URL="${HYPRVIBE_REPO_URL:-https://github.com/IAmBatMan295/hyprvibe.git}"
 USER_HOME="$(resolve_user_home)"
 HYPRVIBE_TARGET_DIR="${USER_HOME}/hyprvibe"
 MODULES_DIR="$SCRIPT_DIR"
