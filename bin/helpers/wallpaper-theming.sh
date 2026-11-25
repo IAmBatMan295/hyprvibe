@@ -67,8 +67,10 @@ for tdir in "$THEMES_DIR" "$USER_THEMES_DIR"; do
             title="Monochrome"
         fi
 
-        # Extract unique hex colors from colors.toml
-        mapfile -t hex_colors < <(grep -oE '#[0-9a-fA-F]{6}' "$tpath/colors.toml" | sort -u)
+        # Extract unique hex colors (prefer optional wallpaper.palette over colors.toml)
+        local_palette_src="$tpath/colors.toml"
+        [[ -f "$tpath/wallpaper.palette" ]] && local_palette_src="$tpath/wallpaper.palette"
+        mapfile -t hex_colors < <(grep -oE '#[0-9a-fA-F]{6}' "$local_palette_src" | sort -u)
 
         slug="${BUILTIN_LUTGEN_MAP[$tname]:-$tname}"
         PALETTES+=("${slug}|${title}")
