@@ -21,6 +21,8 @@ class LauncherModel : public QAbstractListModel {
   Q_PROPERTY(QString matchingMode READ matchingMode WRITE setMatchingMode NOTIFY matchingModeChanged)
   Q_PROPERTY(bool caseSensitive READ caseSensitive WRITE setCaseSensitive NOTIFY caseSensitiveChanged)
   Q_PROPERTY(bool sortEnabled READ sortEnabled WRITE setSortEnabled NOTIFY sortEnabledChanged)
+  Q_PROPERTY(QString historyPath READ historyPath WRITE setHistoryPath NOTIFY historyPathChanged)
+  Q_PROPERTY(QString highlightColor READ highlightColor WRITE setHighlightColor NOTIFY highlightColorChanged)
   Q_PROPERTY(int errorCount READ errorCount NOTIFY errorCountChanged)
 
 public:
@@ -32,7 +34,8 @@ public:
     ActiveRole,
     RowNumberRole,
     OriginalIndexRole,
-    ScoreRole
+    ScoreRole,
+    HighlightedLabelRole
   };
 
   enum class MatchMode {
@@ -61,6 +64,10 @@ public:
   void setCaseSensitive(bool cs);
   bool sortEnabled() const { return m_sortEnabled; }
   void setSortEnabled(bool enabled);
+  QString historyPath() const { return m_historyPath; }
+  void setHistoryPath(const QString& path);
+  QString highlightColor() const { return m_highlightColor; }
+  void setHighlightColor(const QString& color);
   int errorCount() const { return m_errorCount; }
 
   Q_INVOKABLE bool startIpcServer(const QString& socketPath);
@@ -87,6 +94,8 @@ signals:
   void matchingModeChanged();
   void caseSensitiveChanged();
   void sortEnabledChanged();
+  void historyPathChanged();
+  void highlightColorChanged();
   void errorCountChanged();
   void ipcRequestReceived(const QVariantMap& meta);
   void ipcClientCancelled();
@@ -116,6 +125,8 @@ private:
   struct ScoredRow {
     int idx;
     int score;
+    int freq = 0;
+    bool labelMatch = true;
   };
 
   struct Span {
@@ -135,20 +146,29 @@ private:
   void applyMatchOptions(const QString& mode, bool cs, bool sortEn);
 
   void refilter();
+  int frecencyBoost(const QString& actionKey) const;
+  void loadHistory();
+  void saveHistory() const;
   static int scoreTerms(const char* blob, const Entry& e,
                         const std::vector<QByteArray>& terms,
-                        int freqBoost, MatchMode mode, bool caseSens);
+                        MatchMode mode, bool caseSens,
+                        bool& labelMatchedOut);
   static int scoreSingleTerm(const char* hay, int hlen,
                              const char* label, int llen,
                              const char* term, int tlen,
-                             MatchMode mode, bool caseSens);
+                             MatchMode mode, bool caseSens,
+                             bool& matchedInLabelOut);
   static QByteArray stripPangoUtf8(const char* s, int len);
   static MatchMode parseMatchMode(const QString& mode);
+  QString buildHighlightedLabel(const QString& label) const;
 
   QByteArray m_blob;
   std::vector<Entry> m_entries;
   std::vector<ScoredRow> m_filtered;
   QHash<QString, int> m_frecency;
+  QString m_historyPath;
+  QString m_highlightColor = QStringLiteral("#a63232");
+  bool m_fromLoadItems = false;
   QString m_query;
   MatchMode m_matchMode = MatchMode::Fuzzy;
   bool m_caseSensitive = false;

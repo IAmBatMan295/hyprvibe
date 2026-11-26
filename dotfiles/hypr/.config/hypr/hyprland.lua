@@ -17,3 +17,14 @@ require("config.theme")
 require("config.inputs")
 require("config.rules")
 require("config.binds")
+
+-- Optional git-untracked user/Settings-GUI overrides loaded last so every Hyprland rule/var can be tuned cleanly.
+local user_override = (os.getenv("HOME") or "") .. "/.config/hyprvibe/hypr-overrides.lua"
+local f = io.open(user_override, "r")
+if f then
+  f:close()
+  local ok, err = pcall(dofile, user_override)
+  if not ok then
+    io.stderr:write("hypr-overrides.lua error: " .. tostring(err) .. "\n")
+  end
+end

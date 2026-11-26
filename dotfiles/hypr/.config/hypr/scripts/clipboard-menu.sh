@@ -9,7 +9,6 @@ fi
 HISTORY_SNAPSHOT=$(cliphist list | head -n 20)
 
 # 2. Options
-CLEAR_OPTION="  Clear History"
 EMPTY_MESSAGE="   [Empty]"
 
 if [ -z "$HISTORY_SNAPSHOT" ]; then
@@ -23,22 +22,21 @@ else
                  awk '{$1=""; sub(/^[ \t]+/, ""); printf "%d. %s\n", NR, $0}')
 fi
 
-FINAL_MENU=$(printf "%s\n%s" "$MENU_ITEMS" "$CLEAR_OPTION")
-
-# 3. Launch Quickshell C++ launcher
-SELECTED_ITEM=$(printf '%s\n' "$FINAL_MENU" | hyprvibe-dmenu -dmenu \
+# 3. Launch Quickshell C++ launcher (Ctrl+C exits with 10 to wipe history)
+DMENU_STATUS=0
+SELECTED_ITEM=$(printf '%s\n' "$MENU_ITEMS" | hyprvibe-dmenu -dmenu \
     --preset clipboard \
     -p " " \
-    -i || true)
+    -i) || DMENU_STATUS=$?
 
 # 4. Logic
-if [ -z "$SELECTED_ITEM" ]; then exit 0; fi
-
-if [ "$SELECTED_ITEM" = "$CLEAR_OPTION" ]; then
+if [ "$DMENU_STATUS" -eq 10 ]; then
     cliphist wipe
     wl-copy --clear
     exit 0
 fi
+
+if [ "$DMENU_STATUS" -ne 0 ] || [ -z "$SELECTED_ITEM" ]; then exit 0; fi
 
 if [ "$SELECTED_ITEM" = "$EMPTY_MESSAGE" ]; then exit 0; fi
 

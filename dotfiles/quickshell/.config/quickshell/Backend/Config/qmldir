@@ -1,0 +1,6 @@
+module qs.Backend.Config
+singleton Util 1.0 Util.qml
+singleton ThemeStore 1.0 ThemeStore.qml
+singleton Style 1.0 Style.qml
+singleton ShellConfig 1.0 ShellConfig.qml
+singleton Border 1.0 Border.qml

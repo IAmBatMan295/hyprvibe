@@ -1,0 +1,5 @@
+module qs.Frontend.Styles
+singleton ControlsStyle 1.0 ControlsStyle.qml
+singleton BarStyle 1.0 BarStyle.qml
+singleton PanelStyle 1.0 PanelStyle.qml
+singleton LauncherStyle 1.0 LauncherStyle.qml

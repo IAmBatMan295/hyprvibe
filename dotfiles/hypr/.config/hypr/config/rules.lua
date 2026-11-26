@@ -2,7 +2,8 @@
 hl.layer_rule({ match = { namespace = "hyprvibe-bar" }, blur = true, ignore_alpha = 0.5 })
 hl.layer_rule({ match = { namespace = "notifications" }, blur = true, ignore_alpha = 0.5 })
 hl.layer_rule({ match = { namespace = "hyprvibe-launcher" }, blur = true, ignore_alpha = 0.5 })
-hl.layer_rule({ match = { namespace = "hyprvibe-keyboard-panel.*" }, no_anim = true })
+hl.layer_rule({ match = { namespace = "hyprvibe-settings" }, blur = true, ignore_alpha = 0.5 })
+hl.layer_rule({ match = { namespace = "hyprvibe-keyboard-panel.*" }, no_anim = true, blur = true, ignore_alpha = 0.5 })
 
 hl.window_rule({
 	match = { class = "^hyprvibe-helper$" },

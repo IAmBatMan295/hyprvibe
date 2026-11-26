@@ -167,7 +167,7 @@ main() {
         local _l_so="${DOTFILES_DIR}/quickshell/.config/quickshell/Launcher/HyprVibeLauncher/libhyprvibelauncher.so"
         local _l_bin="${USER_HOME}/.local/bin/hyprvibe-dmenu"
         local _l_src="${DOTFILES_DIR}/quickshell/.config/quickshell/Launcher/engine"
-        if [[ ! -f "$_l_so" || ! -x "$_l_bin" || "${_l_src}/LauncherModel.cpp" -nt "$_l_so" || "${_l_src}/hyprvibe-dmenu.cpp" -nt "$_l_bin" ]]; then
+        if [[ ! -f "$_l_so" || ! -x "$_l_bin" || "${_l_src}/LauncherModel.cpp" -nt "$_l_so" || "${_l_src}/SystemCore.cpp" -nt "$_l_so" || "${_l_src}/SystemCore.hpp" -nt "$_l_so" || "${_l_src}/PulseEngine.cpp" -nt "$_l_so" || "${_l_src}/PulseEngine.hpp" -nt "$_l_so" || "${_l_src}/DBusEngine.cpp" -nt "$_l_so" || "${_l_src}/DBusEngine.hpp" -nt "$_l_so" || "${_l_src}/CMakeLists.txt" -nt "$_l_so" || "${_l_src}/hyprvibe-dmenu.cpp" -nt "$_l_bin" ]]; then
             USER_HOME="$USER_HOME" "${SCRIPT_DIR}/build-launcher.sh" || log_warn "Launcher C++ build skipped or failed"
         fi
     fi

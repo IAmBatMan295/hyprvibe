@@ -326,6 +326,9 @@ int main(int argc, char** argv) {
   }
   ::close(fd);
 
+  if (reply == "CLEAR\n" || reply == "CLEAR") {
+    return 10;
+  }
   if (reply.rfind("ERR\t", 0) == 0) {
     std::cerr << "Daemon error: " << reply.substr(4);
     return 2;

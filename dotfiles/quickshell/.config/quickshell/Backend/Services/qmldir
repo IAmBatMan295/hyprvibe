@@ -1,0 +1,7 @@
+module qs.Backend.Services
+singleton TelemetryService 1.0 TelemetryService.qml
+singleton AudioService 1.0 AudioService.qml
+singleton BluetoothService 1.0 BluetoothService.qml
+singleton NetworkService 1.0 NetworkService.qml
+singleton PowerService 1.0 PowerService.qml
+singleton SettingsService 1.0 SettingsService.qml

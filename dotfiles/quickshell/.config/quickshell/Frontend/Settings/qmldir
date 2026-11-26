@@ -1,0 +1,7 @@
+module qs.Frontend.Settings
+SettingsWindow 1.0 SettingsWindow.qml
+SettingRow 1.0 SettingRow.qml
+SettingToggle 1.0 SettingToggle.qml
+SettingSlider 1.0 SettingSlider.qml
+SettingChoices 1.0 SettingChoices.qml
+SettingFontPicker 1.0 SettingFontPicker.qml

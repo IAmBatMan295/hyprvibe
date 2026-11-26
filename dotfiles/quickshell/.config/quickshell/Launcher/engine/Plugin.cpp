@@ -1,4 +1,5 @@
 #include "LauncherModel.hpp"
+#include "SystemCore.hpp"
 
 #include <QQmlExtensionPlugin>
 #include <qqml.h>
@@ -10,6 +11,10 @@ class HyprVibeLauncherPlugin : public QQmlExtensionPlugin {
 public:
   void registerTypes(const char* uri) override {
     qmlRegisterType<LauncherModel>(uri, 1, 0, "LauncherModel");
+    qmlRegisterSingletonType<SystemCore>(uri, 1, 0, "SystemCore",
+                                         [](QQmlEngine*, QJSEngine*) -> QObject* {
+                                           return new SystemCore();
+                                         });
   }
 };
 

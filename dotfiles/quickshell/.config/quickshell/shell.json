@@ -28,9 +28,6 @@
           "id": "hyprvibe.memory"
         },
         {
-          "id": "hyprvibe.separator"
-        },
-        {
           "id": "hyprvibe.audio"
         },
         {
@@ -38,9 +35,6 @@
         },
         {
           "id": "hyprvibe.network"
-        },
-        {
-          "id": "hyprvibe.separator"
         },
         {
           "id": "hyprvibe.backlight"
@@ -53,6 +47,5 @@
         }
       ]
     }
-  },
-  "plugins": []
+  }
 }

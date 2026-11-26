@@ -1,14 +1,18 @@
 #include "LauncherModel.hpp"
 
+#include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
 #include <QFileSystemWatcher>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QPixmapCache>
+#include <QSaveFile>
 #include <QSocketNotifier>
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <errno.h>
 #include <malloc.h>
@@ -69,6 +73,244 @@ inline bool startsWithSpan(const char* a, int alen, const char* b, int blen, boo
     }
   }
   return true;
+}
+
+inline bool isWordBoundary(const char* s, int pos) {
+  if (pos <= 0) return true;
+  if (isBoundaryByte(s[pos - 1])) return true;
+  return std::islower(static_cast<unsigned char>(s[pos - 1])) &&
+         std::isupper(static_cast<unsigned char>(s[pos]));
+}
+
+inline bool isQCharBoundary(const QString& s, int pos) {
+  if (pos <= 0) return true;
+  const QChar prev = s.at(pos - 1);
+  if (prev == QLatin1Char(' ') || prev == QLatin1Char('-') || prev == QLatin1Char('_') ||
+      prev == QLatin1Char('/') || prev == QLatin1Char('.')) {
+    return true;
+  }
+  return prev.isLower() && s.at(pos).isUpper();
+}
+
+// Optimal FZF-style O(N*M) DP aligning term[0..tlen) inside s[0..len) maximizing
+// word-boundary and contiguous streaks. Returns -1 if not a subsequence.
+inline int fzfOptimalBytes(const char* s, int len, const char* term, int tlen, bool caseSens) {
+  if (tlen <= 0) return 0;
+  if (tlen > len) return -1;
+
+  // Fast linear rejection pass
+  int ti = 0;
+  unsigned char target = normChar(static_cast<unsigned char>(term[0]), caseSens);
+  for (int i = 0; i < len && ti < tlen; ++i) {
+    if (normChar(static_cast<unsigned char>(s[i]), caseSens) == target) {
+      ++ti;
+      if (ti < tlen) target = normChar(static_cast<unsigned char>(term[ti]), caseSens);
+    }
+  }
+  if (ti != tlen) return -1;
+
+  if (len > 256 || tlen > 32) {
+    // Fallback linear scan for oversized strings
+    int score = 1200;
+    int consec = 0;
+    int firstHit = -1;
+    int lastHit = -1;
+    ti = 0;
+    target = normChar(static_cast<unsigned char>(term[0]), caseSens);
+    for (int i = 0; i < len && ti < tlen; ++i) {
+      if (normChar(static_cast<unsigned char>(s[i]), caseSens) == target) {
+        if (firstHit < 0) firstHit = i;
+        const bool adj = (lastHit >= 0 && i == lastHit + 1);
+        consec = adj ? (consec + 1) : 1;
+        score += 50 + consec * 35 + (isWordBoundary(s, i) ? 95 : 0);
+        if (lastHit >= 0 && !adj) score -= std::min(40, (i - lastHit - 1) * 3);
+        lastHit = i;
+        ++ti;
+        if (ti < tlen) target = normChar(static_cast<unsigned char>(term[ti]), caseSens);
+      }
+    }
+    return std::max(100, score - std::max(0, firstHit) * 2 - len);
+  }
+
+  constexpr int kNeg = -1000000000;
+  int prevSc[256];
+  int prevConsec[256];
+  int curSc[256];
+  int curConsec[256];
+
+  const unsigned char t0 = normChar(static_cast<unsigned char>(term[0]), caseSens);
+  for (int i = 0; i < len; ++i) {
+    if (normChar(static_cast<unsigned char>(s[i]), caseSens) == t0) {
+      prevSc[i] = 1200 + 50 + 35 + (isWordBoundary(s, i) ? 95 : 0) - i * 2;
+      prevConsec[i] = 1;
+    } else {
+      prevSc[i] = kNeg;
+      prevConsec[i] = 0;
+    }
+  }
+
+  for (int j = 1; j < tlen; ++j) {
+    const unsigned char tj = normChar(static_cast<unsigned char>(term[j]), caseSens);
+    int bestJump = kNeg;
+    int bestJumpIdx = -1;
+    for (int i = 0; i < len; ++i) {
+      curSc[i] = kNeg;
+      curConsec[i] = 0;
+      if (normChar(static_cast<unsigned char>(s[i]), caseSens) == tj) {
+        const int bonus = (isWordBoundary(s, i) ? 95 : 0);
+        int bestCand = kNeg;
+        int bestC = 1;
+        if (i > 0 && prevSc[i - 1] > kNeg / 2) {
+          const int c = prevConsec[i - 1] + 1;
+          bestCand = prevSc[i - 1] + 50 + c * 35 + bonus;
+          bestC = c;
+        }
+        if (bestJump > kNeg / 2) {
+          const int gap = i - bestJumpIdx - 1;
+          const int jumpCand = bestJump + 50 + 35 + bonus - std::min(40, gap * 3);
+          if (jumpCand > bestCand) {
+            bestCand = jumpCand;
+            bestC = 1;
+          }
+        }
+        curSc[i] = bestCand;
+        curConsec[i] = bestC;
+      }
+      if (prevSc[i] > kNeg / 2) {
+        if (bestJump <= kNeg / 2 || prevSc[i] > bestJump - std::min(40, (i - bestJumpIdx) * 3)) {
+          bestJump = prevSc[i];
+          bestJumpIdx = i;
+        }
+      }
+    }
+    std::memcpy(prevSc, curSc, static_cast<size_t>(len) * sizeof(int));
+    std::memcpy(prevConsec, curConsec, static_cast<size_t>(len) * sizeof(int));
+  }
+
+  int best = kNeg;
+  for (int i = 0; i < len; ++i) {
+    if (prevSc[i] > best) best = prevSc[i];
+  }
+  if (best <= kNeg / 2) return -1;
+  return std::max(100, best - len);
+}
+
+inline int findBestSubstringBoundary(const char* hay, int hlen, const char* term, int tlen,
+                                     int startPos, bool caseSens, bool& boundaryOut) {
+  int firstPos = -1;
+  boundaryOut = false;
+  int pos = findSpan(hay, hlen, term, tlen, startPos, caseSens);
+  while (pos >= 0) {
+    if (firstPos < 0) firstPos = pos;
+    if (isWordBoundary(hay, pos)) {
+      boundaryOut = true;
+      return pos;
+    }
+    pos = findSpan(hay, hlen, term, tlen, pos + 1, caseSens);
+  }
+  return firstPos;
+}
+
+inline int findBestSubstringQStr(const QString& s, const QString& term, Qt::CaseSensitivity cs) {
+  int firstIdx = s.indexOf(term, 0, cs);
+  int idx = firstIdx;
+  while (idx >= 0) {
+    if (isQCharBoundary(s, idx)) return idx;
+    idx = s.indexOf(term, idx + 1, cs);
+  }
+  return firstIdx;
+}
+
+inline void fzfMarkOptimalQStr(const QString& s, const QString& term, bool caseSens,
+                                 std::vector<bool>& mask) {
+  const int n = static_cast<int>(s.size());
+  const int m = static_cast<int>(term.size());
+  if (n <= 0 || m <= 0 || m > n) return;
+
+  auto eqChar = [&](int si, int ti) -> bool {
+    const QChar sc = s.at(si);
+    const QChar tc = term.at(ti);
+    return caseSens ? (sc == tc) : (sc.toLower() == tc.toLower());
+  };
+
+  if (n > 256 || m > 32) {
+    int ti = 0;
+    for (int i = 0; i < n && ti < m; ++i) {
+      if (eqChar(i, ti)) { mask[i] = true; ++ti; }
+    }
+    return;
+  }
+
+  constexpr int kNeg = -1000000000;
+  std::vector<int> prev(n, kNeg);
+  std::vector<int> prevC(n, 0);
+  std::vector<int> trace(static_cast<size_t>(m) * n, -1);
+
+  for (int i = 0; i < n; ++i) {
+    if (eqChar(i, 0)) {
+      prev[i] = 1200 + 50 + 35 + (isQCharBoundary(s, i) ? 95 : 0) - i * 2;
+      prevC[i] = 1;
+    }
+  }
+
+  std::vector<int> cur(n, kNeg);
+  std::vector<int> curC(n, 0);
+  for (int j = 1; j < m; ++j) {
+    std::fill(cur.begin(), cur.end(), kNeg);
+    std::fill(curC.begin(), curC.end(), 0);
+    int bestJump = kNeg;
+    int bestJumpIdx = -1;
+    for (int i = 0; i < n; ++i) {
+      if (eqChar(i, j)) {
+        const int bonus = isQCharBoundary(s, i) ? 95 : 0;
+        int bestCand = kNeg;
+        int bestC = 1;
+        int fromIdx = -1;
+        if (i > 0 && prev[i - 1] > kNeg / 2) {
+          const int c = prevC[i - 1] + 1;
+          bestCand = prev[i - 1] + 50 + c * 35 + bonus;
+          bestC = c;
+          fromIdx = i - 1;
+        }
+        if (bestJump > kNeg / 2) {
+          const int gap = i - bestJumpIdx - 1;
+          const int jumpCand = bestJump + 50 + 35 + bonus - std::min(40, gap * 3);
+          if (jumpCand > bestCand) {
+            bestCand = jumpCand;
+            bestC = 1;
+            fromIdx = bestJumpIdx;
+          }
+        }
+        cur[i] = bestCand;
+        curC[i] = bestC;
+        trace[static_cast<size_t>(j) * n + i] = fromIdx;
+      }
+      if (prev[i] > kNeg / 2) {
+        if (bestJump <= kNeg / 2 || prev[i] > bestJump - std::min(40, (i - bestJumpIdx) * 3)) {
+          bestJump = prev[i];
+          bestJumpIdx = i;
+        }
+      }
+    }
+    prev.swap(cur);
+    prevC.swap(curC);
+  }
+
+  int bestIdx = -1;
+  int bestScore = kNeg;
+  for (int i = 0; i < n; ++i) {
+    if (prev[i] > bestScore) {
+      bestScore = prev[i];
+      bestIdx = i;
+    }
+  }
+  if (bestIdx < 0 || bestScore <= kNeg / 2) return;
+
+  int curr = bestIdx;
+  for (int j = m - 1; j >= 0 && curr >= 0; --j) {
+    mask[curr] = true;
+    curr = (j > 0) ? trace[static_cast<size_t>(j) * n + curr] : -1;
+  }
 }
 
 inline uint32_t leadingNumberSkip(const char* s, uint32_t len) {
@@ -211,6 +453,7 @@ QVariant LauncherModel::data(const QModelIndex& index, int role) const {
     case RowNumberRole: return row + 1;
     case OriginalIndexRole: return e.baseOrder;
     case ScoreRole: return sr.score;
+    case HighlightedLabelRole: return buildHighlightedLabel(decodeSpan(e.labelOff, e.labelLen));
     default: return {};
   }
 }
@@ -225,6 +468,7 @@ QHash<int, QByteArray> LauncherModel::roleNames() const {
     {RowNumberRole, "rowNumber"},
     {OriginalIndexRole, "originalIndex"},
     {ScoreRole, "score"},
+    {HighlightedLabelRole, "highlightedLabel"},
   };
 }
 
@@ -236,6 +480,7 @@ void LauncherModel::setQuery(const QString& query) {
 }
 
 void LauncherModel::loadItems(const QVariantList& items) {
+  m_fromLoadItems = true;
   m_entries.clear();
   m_blob.clear();
   m_entries.reserve(items.size());
@@ -284,6 +529,7 @@ void LauncherModel::loadItems(const QVariantList& items) {
 
 int LauncherModel::loadLines(const QStringList& lines, bool stripMarkup,
                              bool parseNumbers, const QString& activeMatch) {
+  m_fromLoadItems = false;
   m_entries.clear();
   m_blob.clear();
   m_blob.reserve(lines.size() * 48);
@@ -455,78 +701,240 @@ QVariantMap LauncherModel::rowAt(int row) const {
   return map;
 }
 
+void LauncherModel::setHistoryPath(const QString& path) {
+  if (m_historyPath == path) return;
+  m_historyPath = path;
+  emit historyPathChanged();
+  loadHistory();
+  if (!m_entries.empty()) refilter();
+}
+
+void LauncherModel::setHighlightColor(const QString& color) {
+  if (m_highlightColor == color) return;
+  m_highlightColor = color;
+  emit highlightColorChanged();
+  if (!m_filtered.empty()) {
+    emit dataChanged(index(0), index(static_cast<int>(m_filtered.size()) - 1), {HighlightedLabelRole});
+  }
+}
+
+QString LauncherModel::buildHighlightedLabel(const QString& label) const {
+  const QString trimmed = m_query.trimmed();
+  if (trimmed.isEmpty() || label.isEmpty()) return label;
+
+  const QStringList terms = trimmed.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+  if (terms.isEmpty()) return label;
+
+  std::vector<bool> mask(static_cast<size_t>(label.size()), false);
+  const Qt::CaseSensitivity cs = m_caseSensitive ? Qt::CaseSensitive : Qt::CaseInsensitive;
+
+  for (const QString& term : terms) {
+    if (m_matchMode == MatchMode::Exact) {
+      if (QString::compare(label, term, cs) == 0) {
+        std::fill(mask.begin(), mask.end(), true);
+      }
+      continue;
+    }
+    if (m_matchMode == MatchMode::Prefix) {
+      if (label.startsWith(term, cs)) {
+        const qsizetype lim = std::min(label.size(), term.size());
+        for (qsizetype i = 0; i < lim; ++i) mask[i] = true;
+      }
+      continue;
+    }
+    const int hit = findBestSubstringQStr(label, term, cs);
+    if (hit >= 0) {
+      const qsizetype end = std::min(label.size(), static_cast<qsizetype>(hit) + term.size());
+      for (qsizetype i = hit; i < end; ++i) mask[i] = true;
+    } else if (m_matchMode == MatchMode::Fuzzy) {
+      fzfMarkOptimalQStr(label, term, m_caseSensitive, mask);
+    }
+  }
+
+  QString hex = m_highlightColor.trimmed().toHtmlEscaped();
+  if (hex.isEmpty()) hex = QStringLiteral("#a63232");
+
+  QString out;
+  out.reserve(label.size() + 48);
+  bool inSpan = false;
+  for (int i = 0; i < label.size(); ++i) {
+    const bool hit = mask[i];
+    if (hit && !inSpan) {
+      out.append(QStringLiteral("<b><font color=\""));
+      out.append(hex);
+      out.append(QStringLiteral("\">"));
+      inSpan = true;
+    } else if (!hit && inSpan) {
+      out.append(QStringLiteral("</font></b>"));
+      inSpan = false;
+    }
+    const QChar c = label.at(i);
+    if (c == QLatin1Char('&')) out.append(QStringLiteral("&amp;"));
+    else if (c == QLatin1Char('<')) out.append(QStringLiteral("&lt;"));
+    else if (c == QLatin1Char('>')) out.append(QStringLiteral("&gt;"));
+    else if (c == QLatin1Char('"')) out.append(QStringLiteral("&quot;"));
+    else out.append(c);
+  }
+  if (inSpan) out.append(QStringLiteral("</font></b>"));
+  return out;
+}
+
+int LauncherModel::frecencyBoost(const QString& actionKey) const {
+  if (actionKey.isEmpty() || m_frecency.isEmpty()) return 0;
+  int v = m_frecency.value(actionKey, 0);
+  if (v > 0) return v;
+  if (actionKey.endsWith(QStringLiteral(".desktop"))) {
+    return m_frecency.value(actionKey.chopped(8), 0);
+  }
+  return m_frecency.value(actionKey + QStringLiteral(".desktop"), 0);
+}
+
+void LauncherModel::loadHistory() {
+  if (m_historyPath.isEmpty()) return;
+  QFile f(m_historyPath);
+  if (f.open(QIODevice::ReadOnly)) {
+    const QList<QByteArray> lines = f.readAll().split('\n');
+    for (const QByteArray& raw : lines) {
+      const QByteArray line = raw.trimmed();
+      if (line.isEmpty()) continue;
+      const int tab = line.indexOf('\t');
+      if (tab <= 0) continue;
+      bool ok = false;
+      const int cnt = line.left(tab).toInt(&ok);
+      const QString key = QString::fromUtf8(line.mid(tab + 1)).trimmed();
+      if (ok && cnt > 0 && !key.isEmpty()) m_frecency[key] = std::max(m_frecency.value(key, 0), cnt);
+    }
+    return;
+  }
+
+  // Bootstrap once from existing ~/.cache/rofi3.druncache so prior Rofi usage floats to top immediately.
+  const QString home = QFileInfo(m_historyPath).absolutePath().endsWith(QStringLiteral("/.local/state/hyprvibe"))
+                           ? QFileInfo(m_historyPath).absolutePath().chopped(22)
+                           : QString();
+  if (home.isEmpty()) return;
+  QFile rofiCache(home + QStringLiteral("/.cache/rofi3.druncache"));
+  if (!rofiCache.open(QIODevice::ReadOnly)) return;
+  bool imported = false;
+  const QList<QByteArray> rlines = rofiCache.readAll().split('\n');
+  for (const QByteArray& raw : rlines) {
+    const QByteArray line = raw.trimmed();
+    const int sp = line.indexOf(' ');
+    if (sp <= 0) continue;
+    bool ok = false;
+    const int cnt = line.left(sp).toInt(&ok);
+    const QString key = QString::fromUtf8(line.mid(sp + 1)).trimmed();
+    if (ok && cnt > 0 && !key.isEmpty()) {
+      m_frecency[key] = std::max(m_frecency.value(key, 0), cnt);
+      imported = true;
+    }
+  }
+  if (imported) saveHistory();
+}
+
+void LauncherModel::saveHistory() const {
+  if (m_historyPath.isEmpty()) return;
+  QFileInfo fi(m_historyPath);
+  QDir().mkpath(fi.absolutePath());
+  QSaveFile out(m_historyPath);
+  if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
+  for (auto it = m_frecency.constBegin(); it != m_frecency.constEnd(); ++it) {
+    if (it.value() <= 0 || it.key().isEmpty()) continue;
+    const QByteArray row = QByteArray::number(it.value()) + '\t' + it.key().toUtf8() + '\n';
+    out.write(row);
+  }
+  out.commit();
+}
+
 void LauncherModel::recordLaunch(const QString& key) {
-  if (!key.isEmpty()) m_frecency[key] += 1;
+  if (key.isEmpty()) return;
+  const int nextVal = frecencyBoost(key) + 1;
+  m_frecency[key] = nextVal;
+  if (key.endsWith(QStringLiteral(".desktop"))) {
+    m_frecency.remove(key.chopped(8));
+  }
+  saveHistory();
 }
 
 int LauncherModel::scoreSingleTerm(const char* hay, int hlen,
                                    const char* label, int llen,
                                    const char* term, int tlen,
-                                   MatchMode mode, bool caseSens) {
-  if (tlen <= 0) return 1;
+                                   MatchMode mode, bool caseSens,
+                                   bool& matchedInLabelOut) {
+  if (tlen <= 0) {
+    matchedInLabelOut = true;
+    return 1;
+  }
 
-  if (equalSpan(label, llen, term, tlen, caseSens)) return 100000;
+  if (equalSpan(label, llen, term, tlen, caseSens)) {
+    matchedInLabelOut = true;
+    return 100000;
+  }
   if (mode == MatchMode::Exact) {
+    matchedInLabelOut = false;
     return (hay != label && equalSpan(hay, hlen, term, tlen, caseSens)) ? 90000 : -1;
   }
 
-  if (startsWithSpan(label, llen, term, tlen, caseSens)) return 50000 - llen;
+  if (startsWithSpan(label, llen, term, tlen, caseSens)) {
+    matchedInLabelOut = true;
+    return 50000 - llen;
+  }
   if (mode == MatchMode::Prefix) {
+    matchedInLabelOut = false;
     return (hay != label && startsWithSpan(hay, hlen, term, tlen, caseSens)) ? (45000 - hlen) : -1;
   }
 
-  const int lpos = findSpan(label, llen, term, tlen, 1, caseSens);
+  bool boundaryHit = false;
+  const int lpos = findBestSubstringBoundary(label, llen, term, tlen, 1, caseSens, boundaryHit);
   if (lpos > 0) {
-    if (isBoundaryByte(label[lpos - 1])) return 32000 - lpos * 4;
-    return 18000 - lpos * 4;
+    matchedInLabelOut = true;
+    if (boundaryHit) return 32000 - lpos * 4;
+    return 20000 - lpos * 4;
   }
 
+  if (mode != MatchMode::Substring) {
+    const int lfzf = fzfOptimalBytes(label, llen, term, tlen, caseSens);
+    if (lfzf >= 0) {
+      matchedInLabelOut = true;
+      return 6000 + lfzf;
+    }
+  }
+
+  // Secondary fields (subtext/keywords/desktop-id): match contiguous substrings only
+  // so scattered letters across unrelated descriptions/categories never pollute results.
+  matchedInLabelOut = false;
   if (hay != label || hlen != llen) {
-    const int hpos = findSpan(hay, hlen, term, tlen, 0, caseSens);
+    bool secBoundary = false;
+    const int hpos = findBestSubstringBoundary(hay, hlen, term, tlen, 0, caseSens, secBoundary);
     if (hpos >= 0) {
-      if (hpos == 0 || isBoundaryByte(hay[hpos - 1])) return 12000 - hpos * 2;
+      if (secBoundary) return 12000 - hpos * 2;
       return 8000 - hpos;
     }
   }
 
-  if (mode == MatchMode::Substring) return -1;
-
-  int ti = 0;
-  int score = 1000;
-  int consec = 0;
-  unsigned char target = normChar(static_cast<unsigned char>(term[0]), caseSens);
-  for (int hi = 0; hi < hlen && ti < tlen; ++hi) {
-    if (normChar(static_cast<unsigned char>(hay[hi]), caseSens) == target) {
-      consec += 1;
-      score += 40 + consec * 25;
-      if (hi == 0 || isBoundaryByte(hay[hi - 1])) score += 80;
-      ti += 1;
-      if (ti < tlen) target = normChar(static_cast<unsigned char>(term[ti]), caseSens);
-    } else {
-      consec = 0;
-      score -= 2;
-    }
-  }
-  return (ti == tlen) ? std::max(100, score) : -1;
+  return -1;
 }
 
 int LauncherModel::scoreTerms(const char* blob, const Entry& e,
                               const std::vector<QByteArray>& terms,
-                              int freqBoost, MatchMode mode, bool caseSens) {
+                              MatchMode mode, bool caseSens,
+                              bool& labelMatchedOut) {
   const char* hay = blob + e.hayOff;
   const int hlen = static_cast<int>(e.hayLen);
   const char* label = blob + e.labelOff;
   const int llen = static_cast<int>(e.labelLen);
 
   int sum = 0;
+  labelMatchedOut = true;
   for (const QByteArray& term : terms) {
+    bool inLabel = false;
     const int s = scoreSingleTerm(hay, hlen, label, llen,
                                   term.constData(), static_cast<int>(term.size()),
-                                  mode, caseSens);
+                                  mode, caseSens, inLabel);
     if (s < 0) return -1;
+    if (!inLabel) labelMatchedOut = false;
     sum += s;
   }
-  return sum + freqBoost * 150;
+  return sum;
 }
 
 void LauncherModel::refilter() {
@@ -551,29 +959,38 @@ void LauncherModel::refilter() {
   const char* blob = m_blob.constData();
 
   if (terms.empty()) {
-    if (!hasFrecency || !m_sortEnabled) {
-      for (int i = 0; i < n; ++i) next.push_back({i, -i});
-    } else {
-      for (int i = 0; i < n; ++i) {
-        const Entry& e = m_entries[i];
-        const int boost = m_frecency.value(decodeSpan(e.actionOff, e.actionLen), 0);
-        next.push_back({i, boost * 150 - e.baseOrder});
-      }
-      std::stable_sort(next.begin(), next.end(), [](const ScoredRow& a, const ScoredRow& b) {
-        return a.score > b.score;
+    for (int i = 0; i < n; ++i) {
+      const Entry& e = m_entries[i];
+      const int boost = (hasFrecency && m_sortEnabled)
+                            ? frecencyBoost(decodeSpan(e.actionOff, e.actionLen))
+                            : 0;
+      next.push_back({i, 0, boost, true});
+    }
+    if (m_sortEnabled) {
+      std::stable_sort(next.begin(), next.end(), [this](const ScoredRow& a, const ScoredRow& b) {
+        if (a.freq != b.freq) return a.freq > b.freq;
+        if (m_fromLoadItems) {
+          const QString la = decodeSpan(m_entries[a.idx].labelOff, m_entries[a.idx].labelLen);
+          const QString lb = decodeSpan(m_entries[b.idx].labelOff, m_entries[b.idx].labelLen);
+          const int cmp = QString::compare(la, lb, Qt::CaseInsensitive);
+          if (cmp != 0) return cmp < 0;
+        }
+        return m_entries[a.idx].baseOrder < m_entries[b.idx].baseOrder;
       });
     }
   } else {
     for (int i = 0; i < n; ++i) {
       const Entry& e = m_entries[i];
-      const int boost = hasFrecency
-                            ? m_frecency.value(decodeSpan(e.actionOff, e.actionLen), 0)
-                            : 0;
-      const int s = scoreTerms(blob, e, terms, boost, m_matchMode, m_caseSensitive);
-      if (s >= 0) next.push_back({i, s});
+      bool inLabel = false;
+      const int s = scoreTerms(blob, e, terms, m_matchMode, m_caseSensitive, inLabel);
+      if (s < 0) continue;
+      const int boost = hasFrecency ? frecencyBoost(decodeSpan(e.actionOff, e.actionLen)) : 0;
+      next.push_back({i, s, boost, inLabel});
     }
     if (m_sortEnabled) {
       std::stable_sort(next.begin(), next.end(), [this](const ScoredRow& a, const ScoredRow& b) {
+        if (a.labelMatch != b.labelMatch) return a.labelMatch;
+        if (a.freq != b.freq) return a.freq > b.freq;
         if (a.score != b.score) return a.score > b.score;
         return m_entries[a.idx].baseOrder < m_entries[b.idx].baseOrder;
       });

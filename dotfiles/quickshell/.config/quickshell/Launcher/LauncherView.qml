@@ -1,6 +1,9 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 import Quickshell
+import qs.Frontend.Styles
+import qs.Frontend.Ui
 
 // Single modular, capability-driven launcher surface ready for global & per-component GUI theming.
 // Supports fast keyboard navigation (Ctrl+N/P/J/K/G, Tab complete, Shift+Return custom, Alt+1..9 quick pick),
@@ -9,13 +12,13 @@ Rectangle {
   id: root
 
   required property var model
-  required property var palette
+  property var palette: LauncherStyle.palette
 
   // Global + per-component typography & styling (wired cleanly from shell.toml [font]/[effects]/[launcher])
   property string fontFamily: "JetBrainsMono Nerd Font"
   property int fontBaseSize: 13
-  property int borderWidth: 2
-  property int borderRadius: 8
+  property int borderWidth: 3
+  property int borderRadius: 0
   property string animationStyle: "none" // "none" | "fade" | "pop"
   property int animationDurationMs: 110
 
@@ -29,20 +32,26 @@ Rectangle {
   property bool centerText: false
   property bool allowCustomInput: false
   property bool onlyMatch: false
-  property bool dynamicHeight: true
+  property bool dynamicHeight: false
   property bool showFooter: true
   property string resultFormat: "s"
 
   property string promptText: ""
+  property string headerIcon: ""
   property string placeholderText: "Type to filter..."
   property int cardWidth: 480
   property int visibleLines: 6
   property int rowHeight: 40
   property int initialRow: 0
   property bool benchAutoAck: false
+  property int selectedRow: 0
+  property real _hoverAnchorX: -1
+  property real _hoverAnchorY: -1
+  property bool _hoverMoved: false
 
   signal accepted(string actionValue, string label, int rowIndex)
   signal cancelled()
+  signal clearRequested()
   signal viewReadyForBench()
 
   readonly property color colBg: palette.background
@@ -59,18 +68,19 @@ Rectangle {
   readonly property int rowSlots: root.dynamicHeight
                                   ? Math.max(1, Math.min(root.visibleLines, Math.max(1, root.model.count)))
                                   : Math.max(1, root.visibleLines)
-  readonly property int searchAreaHeight: root.showSearch ? Math.max(38, root.fontBaseSize + 30) : 0
-  readonly property int searchSepHeight: root.showSearch ? 11 : 0
-  readonly property int headerOnlyHeight: (!root.showSearch && root.showPrompt && root.promptText.length > 0) ? 32 : 0
-  readonly property int footerAreaHeight: root.showFooter ? 24 : 0
+  readonly property int searchAreaHeight: root.showSearch ? Math.max(40, root.fontBaseSize + 28) : 0
+  readonly property int searchSepHeight: root.showSearch ? 14 : 0
+  readonly property int headerOnlyHeight: (!root.showSearch && root.showPrompt && root.promptText.length > 0) ? 48 : 0
+  readonly property int footerAreaHeight: root.showFooter ? 30 : 0
 
   width: root.cardWidth
-  height: 24 + root.searchAreaHeight + root.searchSepHeight + root.headerOnlyHeight
+  height: 32 + root.searchAreaHeight + root.searchSepHeight + root.headerOnlyHeight
           + (root.rowSlots * root.rowHeight) + root.footerAreaHeight
   radius: root.borderRadius
   color: root.colBg
   border.width: root.borderWidth
   border.color: root.colAccent
+  focus: true
   clip: true
   transformOrigin: Item.Center
 
@@ -105,20 +115,31 @@ Rectangle {
 
   function focusDefault(): void {
     if (root.showSearch) {
+      searchInput.focus = true
       searchInput.forceActiveFocus()
     } else {
+      listView.focus = true
       listView.forceActiveFocus()
     }
   }
 
+  function disarmHover(): void {
+    root._hoverMoved = false
+    root._hoverAnchorX = listHover.point.scenePosition.x
+    root._hoverAnchorY = listHover.point.scenePosition.y
+  }
+
   function moveSelection(delta: int): void {
+    root.disarmHover()
+    listView._scrollAnimating = false
     const n = root.model.count
     if (n <= 0) return
-    let next = listView.currentIndex + delta
+    let next = root.selectedRow + delta
     if (next < 0) next = 0
     if (next >= n) next = n - 1
-    listView.currentIndex = next
+    root.selectedRow = next
     listView.positionViewAtIndex(next, ListView.Contain)
+    listView._targetScrollY = listView.contentY
   }
 
   function triggerRow(row: int): void {
@@ -143,16 +164,19 @@ Rectangle {
     if (k === Qt.Key_Escape || (ctrl && k === Qt.Key_G)) {
       event.accepted = true
       root.cancelled()
+    } else if (ctrl && k === Qt.Key_C && root.presetName === "clipboard") {
+      event.accepted = true
+      root.clearRequested()
     } else if (k === Qt.Key_Return || k === Qt.Key_Enter) {
       event.accepted = true
       if (shift && !root.onlyMatch && root.showSearch && searchInput.text.length > 0) {
         root.accepted(searchInput.text, searchInput.text, -1)
       } else {
-        root.triggerRow(listView.currentIndex)
+        root.triggerRow(root.selectedRow)
       }
-    } else if (k === Qt.Key_Tab && root.showSearch && listView.currentIndex >= 0) {
+    } else if (k === Qt.Key_Tab && root.showSearch && root.selectedRow >= 0) {
       event.accepted = true
-      const lbl = root.model.labelAt(listView.currentIndex)
+      const lbl = root.model.labelAt(root.selectedRow)
       if (lbl.length > 0) {
         searchInput.text = lbl
         searchInput.cursorPosition = lbl.length
@@ -184,8 +208,12 @@ Rectangle {
 
   function prepareOpen(animate: bool): void {
     const startIdx = Math.max(0, Math.min(root.initialRow, root.model.count - 1))
-    listView.currentIndex = startIdx
+    root.disarmHover()
+    listView._scrollAnimating = false
+    root.selectedRow = startIdx
     if (startIdx > 0) listView.positionViewAtIndex(startIdx, ListView.Center)
+    else if (startIdx === 0) listView.positionViewAtIndex(0, ListView.Beginning)
+    listView._targetScrollY = listView.contentY
     if (root.model.query !== searchInput.text) {
       searchInput.text = root.model.query
     }
@@ -200,12 +228,22 @@ Rectangle {
 
   Connections {
     target: root.model
+    function onModelReset(): void {
+      root.disarmHover()
+      listView._scrollAnimating = false
+      root.selectedRow = root.model.count > 0 ? 0 : -1
+      if (root.selectedRow === 0) listView.positionViewAtIndex(0, ListView.Beginning)
+      listView._targetScrollY = listView.contentY
+    }
     function onCountChanged(): void {
       if (root.model.count <= 0) {
-        listView.currentIndex = -1
-      } else if (listView.currentIndex < 0 || listView.currentIndex >= root.model.count) {
-        listView.currentIndex = 0
+        root.selectedRow = -1
+      } else if (root.model.query.length > 0 || root.selectedRow < 0 || root.selectedRow >= root.model.count) {
+        root.disarmHover()
+        listView._scrollAnimating = false
+        root.selectedRow = 0
         listView.positionViewAtIndex(0, ListView.Beginning)
+        listView._targetScrollY = listView.contentY
       }
     }
     function onTotalCountChanged(): void {
@@ -219,48 +257,54 @@ Rectangle {
 
   ColumnLayout {
     anchors.fill: parent
-    anchors.margins: 12
+    anchors.margins: 16
     spacing: 0
 
     Rectangle {
       visible: root.showSearch
       Layout.fillWidth: true
       Layout.preferredHeight: root.searchAreaHeight
-      radius: Math.max(2, root.borderRadius - 2)
+      radius: root.borderRadius > 0 ? Math.max(2, root.borderRadius - 2) : 0
       color: root.colDark
-      border.width: 1
+      border.width: 2
       border.color: searchInput.activeFocus ? root.colAccent : root.colSelection
 
       RowLayout {
         anchors.fill: parent
-        anchors.leftMargin: 10
-        anchors.rightMargin: 10
-        spacing: 8
+        spacing: 0
 
         Rectangle {
           visible: root.showPrompt && root.promptText.length > 0
-          Layout.preferredHeight: 24
-          Layout.preferredWidth: promptLabel.implicitWidth + 14
-          radius: 4
+          Layout.preferredHeight: root.searchAreaHeight - 4
+          Layout.preferredWidth: Math.max(root.searchAreaHeight - 4, promptLabel.implicitWidth + 16)
+          radius: root.borderRadius > 0 ? Math.max(1, root.borderRadius - 3) : 0
           color: root.colSelection
-          border.width: 1
-          border.color: root.colAccent
 
           Text {
             id: promptLabel
             anchors.centerIn: parent
             text: root.promptText
             textFormat: Text.PlainText
-            color: root.colFgLight
+            color: root.colAccent
             font.family: root.fontFamily
-            font.pixelSize: Math.max(9, root.fontBaseSize - 1)
+            font.pixelSize: Math.max(10, root.fontBaseSize)
             font.bold: true
+          }
+
+          Rectangle {
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            width: 2
+            color: root.colSelection
           }
         }
 
         TextInput {
           id: searchInput
           Layout.fillWidth: true
+          Layout.leftMargin: 12
+          Layout.rightMargin: 12
           Layout.alignment: Qt.AlignVCenter
           color: root.colFgLight
           selectionColor: root.colSelection
@@ -271,6 +315,7 @@ Rectangle {
           verticalAlignment: TextInput.AlignVCenter
 
           onTextChanged: root.model.query = text
+          Keys.priority: Keys.BeforeItem
           Keys.onPressed: event => root.handleKey(event)
 
           Text {
@@ -290,122 +335,171 @@ Rectangle {
     Item {
       visible: root.showSearch
       Layout.fillWidth: true
-      Layout.preferredHeight: root.showSearch ? 11 : 0
+      Layout.preferredHeight: root.showSearch ? 14 : 0
 
       Rectangle {
         anchors.verticalCenter: parent.verticalCenter
         width: parent.width
-        height: 1
-        color: root.colSelection
+        height: 2
+        antialiasing: false
+        color: Qt.rgba(root.colAccent.r, root.colAccent.g, root.colAccent.b, 0.48)
       }
     }
 
     Item {
       visible: !root.showSearch && root.showPrompt && root.promptText.length > 0
       Layout.fillWidth: true
-      Layout.preferredHeight: visible ? 32 : 0
-
-      Text {
-        anchors.left: root.centerText ? undefined : parent.left
-        anchors.horizontalCenter: root.centerText ? parent.horizontalCenter : undefined
-        anchors.verticalCenter: parent.verticalCenter
-        anchors.leftMargin: 6
-        text: root.promptText
-        textFormat: Text.PlainText
-        color: root.colMuted
-        font.family: root.fontFamily
-        font.pixelSize: Math.max(9, root.fontBaseSize - 2)
-        font.bold: true
-      }
+      Layout.preferredHeight: visible ? 48 : 0
 
       Rectangle {
-        anchors.bottom: parent.bottom
-        anchors.bottomMargin: 4
-        width: parent.width
-        height: 1
-        color: root.colSelection
-      }
-    }
-
-    ListView {
-      id: listView
-      Layout.fillWidth: true
-      Layout.fillHeight: true
-      clip: true
-      focus: !root.showSearch
-      reuseItems: true
-      boundsBehavior: Flickable.StopAtBounds
-      highlightMoveDuration: 0
-      highlightResizeDuration: 0
-      model: root.model
-      Keys.onPressed: event => root.handleKey(event)
-
-      highlight: Rectangle {
-        radius: Math.max(2, root.borderRadius - 3)
-        color: root.colSelection
-        border.width: 1
-        border.color: root.colAccent
-      }
-
-      delegate: Item {
-        id: rowDelegate
-        required property int index
-        required property string label
-        required property string subtext
-        required property string icon
-        required property string actionValue
-        required property bool isActive
-        required property int rowNumber
-
-        readonly property bool isCurrent: ListView.isCurrentItem
-
-        width: listView.width
-        height: root.rowHeight
+        anchors.fill: parent
+        anchors.bottomMargin: 10
+        radius: root.borderRadius > 0 ? Math.max(2, root.borderRadius - 2) : 0
+        color: root.colDark
+        border.width: 2
+        border.color: root.colSelection
 
         RowLayout {
           anchors.fill: parent
-          anchors.leftMargin: 10
-          anchors.rightMargin: 10
-          spacing: 8
+          spacing: 0
 
           Rectangle {
-            visible: root.showNumbers
-            Layout.preferredWidth: Math.max(24, numTxt.implicitWidth + 8)
-            Layout.preferredHeight: 20
-            radius: 3
-            color: rowDelegate.isCurrent ? root.colAccent : root.colDark
-            border.width: 1
-            border.color: rowDelegate.isCurrent ? root.colAccent : root.colSelection
+            Layout.fillHeight: true
+            Layout.preferredWidth: height
+            color: root.colSelection
 
             Text {
-              id: numTxt
               anchors.centerIn: parent
-              text: rowDelegate.rowNumber
+              text: root.headerIcon.length > 0 ? root.headerIcon : ""
               textFormat: Text.PlainText
-              color: rowDelegate.isCurrent ? root.colBg : root.colMuted
+              color: root.colAccent
               font.family: root.fontFamily
-              font.pixelSize: Math.max(8, root.fontBaseSize - 3)
-              font.bold: true
+              font.pixelSize: Math.max(11, root.fontBaseSize + 1)
+            }
+
+            Rectangle {
+              anchors.right: parent.right
+              anchors.top: parent.top
+              anchors.bottom: parent.bottom
+              width: 2
+              color: root.colSelection
             }
           }
 
-          Image {
-            id: rowIcon
-            visible: root.showIcons && source.toString().length > 0
+          Text {
+            Layout.fillWidth: true
+            Layout.leftMargin: 12
+            Layout.rightMargin: 12
+            horizontalAlignment: root.centerText ? Text.AlignHCenter : Text.AlignLeft
+            text: root.promptText
+            textFormat: Text.PlainText
+            color: root.colFgLight
+            font.family: root.fontFamily
+            font.pixelSize: root.fontBaseSize
+            font.bold: true
+            elide: Text.ElideRight
+          }
+        }
+      }
+    }
+
+    Item {
+      id: listBox
+      Layout.fillWidth: true
+      Layout.fillHeight: true
+
+      ListView {
+        id: listView
+        property real _targetScrollY: 0
+        property bool _scrollAnimating: false
+        readonly property real maxScrollY: Math.max(0, Math.max(contentHeight, root.model.count * root.rowHeight) - height)
+
+        anchors.fill: parent
+        clip: true
+        focus: !root.showSearch
+        interactive: false
+        reuseItems: false
+        cacheBuffer: root.rowHeight * 6
+        boundsBehavior: Flickable.StopAtBounds
+        currentIndex: -1
+        highlightFollowsCurrentItem: false
+        model: root.model
+        Keys.onPressed: event => root.handleKey(event)
+
+        ScrollBar.vertical: PanelScrollBar {
+          id: launcherScroll
+          policy: listView.contentHeight > listView.height ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+          onPressedChanged: if (pressed) listView._scrollAnimating = false
+          onPositionChanged: if (pressed) listView._targetScrollY = listView.contentY
+        }
+
+        delegate: Item {
+          id: rowDelegate
+          required property int index
+          required property string label
+          required property string highlightedLabel
+          required property string subtext
+          required property string icon
+          required property string actionValue
+          required property bool isActive
+          required property int rowNumber
+
+          readonly property bool isCurrent: rowDelegate.index === root.selectedRow
+
+          width: listView.width - (launcherScroll.visible ? launcherScroll.width + 6 : 0)
+          height: root.rowHeight
+
+          Rectangle {
+            anchors.fill: parent
+            z: -1
+            visible: rowDelegate.isCurrent
+            radius: root.borderRadius > 0 ? Math.max(2, root.borderRadius - 3) : 0
+            color: root.colSelection
+            border.width: 2
+            border.color: root.colAccent
+          }
+
+          RowLayout {
+          anchors.fill: parent
+          anchors.leftMargin: 12
+          anchors.rightMargin: 12
+          spacing: 10
+
+          Text {
+            visible: root.showNumbers
+            Layout.preferredWidth: Math.max(22, implicitWidth)
+            Layout.alignment: Qt.AlignVCenter
+            horizontalAlignment: Text.AlignLeft
+            text: rowDelegate.rowNumber
+            textFormat: Text.PlainText
+            color: root.colFg
+            font.family: root.fontFamily
+            font.pixelSize: Math.max(9, root.fontBaseSize - 2)
+            font.bold: true
+          }
+
+          Item {
+            visible: root.showIcons
             Layout.preferredWidth: 20
             Layout.preferredHeight: 20
-            asynchronous: true
-            cache: false
-            fillMode: Image.PreserveAspectFit
-            sourceSize.width: 20
-            sourceSize.height: 20
-            source: {
-              if (!root.showIcons || rowDelegate.icon.length === 0) return ""
-              if (rowDelegate.icon.indexOf("/") === 0) return "file://" + rowDelegate.icon
-              if (Quickshell.hasThemeIcon(rowDelegate.icon)) return Quickshell.iconPath(rowDelegate.icon)
-              return Quickshell.hasThemeIcon("application-x-executable")
-                     ? Quickshell.iconPath("application-x-executable")
-                     : ""
+
+            Image {
+              id: rowIcon
+              anchors.fill: parent
+              visible: source.toString().length > 0
+              asynchronous: true
+              cache: true
+              fillMode: Image.PreserveAspectFit
+              sourceSize.width: 20
+              sourceSize.height: 20
+              source: {
+                if (!root.showIcons || rowDelegate.icon.length === 0) return ""
+                if (rowDelegate.icon.indexOf("/") === 0) return "file://" + rowDelegate.icon
+                if (Quickshell.hasThemeIcon(rowDelegate.icon)) return Quickshell.iconPath(rowDelegate.icon)
+                return Quickshell.hasThemeIcon("application-x-executable")
+                       ? Quickshell.iconPath("application-x-executable")
+                       : ""
+              }
             }
           }
 
@@ -414,9 +508,9 @@ Rectangle {
             Layout.alignment: Qt.AlignVCenter
             horizontalAlignment: root.centerText ? Text.AlignHCenter : Text.AlignLeft
             elide: Text.ElideRight
-            text: rowDelegate.label
-            textFormat: Text.PlainText
-            color: rowDelegate.isCurrent || rowDelegate.isActive ? root.colFgLight : root.colFg
+            text: root.model.query.length > 0 ? rowDelegate.highlightedLabel : rowDelegate.label
+            textFormat: root.model.query.length > 0 ? Text.StyledText : Text.PlainText
+            color: rowDelegate.isActive ? root.colAccent : (rowDelegate.isCurrent ? root.colFgLight : root.colFg)
             font.family: root.fontFamily
             font.pixelSize: root.fontBaseSize
             font.bold: rowDelegate.isCurrent || rowDelegate.isActive
@@ -433,20 +527,10 @@ Rectangle {
             font.family: root.fontFamily
             font.pixelSize: Math.max(8, root.fontBaseSize - 3)
           }
-
-          Rectangle {
-            visible: rowDelegate.isActive
-            Layout.preferredWidth: 8
-            Layout.preferredHeight: 8
-            radius: 4
-            color: root.colAccent
-          }
         }
 
         MouseArea {
           anchors.fill: parent
-          hoverEnabled: true
-          onEntered: listView.currentIndex = rowDelegate.index
           onClicked: root.triggerRow(rowDelegate.index)
         }
       }
@@ -462,42 +546,117 @@ Rectangle {
       }
     }
 
+    FrameAnimation {
+      id: scrollFrameAnim
+      running: listView.visible && listView._scrollAnimating && !launcherScroll.pressed
+      onTriggered: {
+        const dt = Math.min(0.05, Math.max(0.001, frameTime))
+        const maxY = listView.maxScrollY
+        const target = Math.max(0, Math.min(maxY, listView._targetScrollY))
+        const diff = target - listView.contentY
+        if (Math.abs(diff) <= 0.4) {
+          listView.contentY = target
+          listView._scrollAnimating = false
+        } else {
+          const k = 1.0 - Math.exp(-22.0 * dt)
+          listView.contentY = listView.contentY + diff * k
+        }
+      }
+    }
+
+    WheelHandler {
+      id: listWheel
+      blocking: true
+      acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+      target: null
+
+      onWheel: event => {
+        const maxY = listView.maxScrollY
+        if (maxY <= 0) {
+          event.accepted = true
+          return
+        }
+        let step = 0
+        if (Math.abs(event.pixelDelta.y) > 0) {
+          step = -event.pixelDelta.y
+        } else if (event.angleDelta.y !== 0) {
+          step = -(event.angleDelta.y / 120.0) * root.rowHeight
+        }
+        if (step !== 0) {
+          const base = listView._scrollAnimating ? listView._targetScrollY : listView.contentY
+          listView._targetScrollY = Math.max(0, Math.min(maxY, base + step))
+          listView._scrollAnimating = true
+        }
+        event.accepted = true
+      }
+    }
+
+    HoverHandler {
+      id: listHover
+
+      onHoveredChanged: {
+        root._hoverMoved = false
+        if (hovered) {
+          root._hoverAnchorX = point.scenePosition.x
+          root._hoverAnchorY = point.scenePosition.y
+        } else {
+          root.selectedRow = root.model.count > 0 ? 0 : -1
+        }
+      }
+
+      onPointChanged: {
+        if (!hovered) return
+        const sx = point.scenePosition.x
+        const sy = point.scenePosition.y
+        if (!root._hoverMoved) {
+          if (Math.abs(sx - root._hoverAnchorX) < 3 && Math.abs(sy - root._hoverAnchorY) < 3) {
+            return
+          }
+          root._hoverMoved = true
+        }
+        if (launcherScroll.visible && point.position.x >= listView.width - launcherScroll.width - 4) {
+          return
+        }
+        const idx = listView.indexAt(point.position.x, point.position.y + listView.contentY)
+        if (idx >= 0 && idx < root.model.count) {
+          root.selectedRow = idx
+        } else {
+          root.selectedRow = root.model.count > 0 ? 0 : -1
+        }
+      }
+    }
+  }
+
     Item {
       visible: root.showFooter
       Layout.fillWidth: true
-      Layout.preferredHeight: root.showFooter ? 24 : 0
+      Layout.preferredHeight: root.showFooter ? 30 : 0
 
-      Rectangle {
+      Item {
         anchors.top: parent.top
-        anchors.topMargin: 3
         width: parent.width
-        height: 1
-        color: root.colSelection
+        height: 12
+
+        Rectangle {
+          anchors.verticalCenter: parent.verticalCenter
+          width: parent.width
+          height: 2
+          antialiasing: false
+          color: Qt.rgba(root.colAccent.r, root.colAccent.g, root.colAccent.b, 0.48)
+        }
       }
 
       RowLayout {
         anchors.fill: parent
-        anchors.topMargin: 5
+        anchors.topMargin: 12
         spacing: 8
 
         Text {
           text: root.presetName.toUpperCase() + "  " + root.model.count + "/" + root.model.totalCount
-                + "  [" + root.model.matchingMode + (root.model.caseSensitive ? " CS" : "") + "]"
           textFormat: Text.PlainText
           color: root.colMuted
           font.family: root.fontFamily
           font.pixelSize: Math.max(8, root.fontBaseSize - 3)
-        }
-
-        Item { Layout.fillWidth: true }
-
-        Text {
-          text: "C++: " + root.model.lastFilterUs + " us"
-          textFormat: Text.PlainText
-          color: root.colYellow
-          font.family: root.fontFamily
-          font.pixelSize: Math.max(8, root.fontBaseSize - 3)
-          font.bold: true
         }
       }
     }

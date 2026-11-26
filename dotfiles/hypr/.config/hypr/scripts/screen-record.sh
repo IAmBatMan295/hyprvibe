@@ -39,94 +39,84 @@ if ! command -v wf-recorder >/dev/null 2>&1; then
     exit 1
 fi
 
-# Recording profiles (optimized for Vega 8 + HDD)
-# Video: h264_vaapi hardware encoding, 1080p
-# Audio: 256kbps AAC, Lossless FLAC, or No Audio
+# Recording profiles: 60fps, lossless FLAC audio (low-CPU compression)
 profiles=(
-    "30fps • 256kbps"
-    "30fps • Lossless"
-    "30fps • No Audio"
-    "60fps • 256kbps"
-    "60fps • Lossless"
-    "60fps • No Audio"
+    "1080p • Lossless"
+    "Native • Lossless"
 )
 
 # Show Quickshell C++ menu
-selected=$(printf '%s\n' "${profiles[@]}" | hyprvibe-dmenu -dmenu --preset compact -i -p "Screen Record" -l 6 --width 280 || true)
+selected=$(printf '%s\n' "${profiles[@]}" | hyprvibe-dmenu -dmenu --preset record || true)
 
 # Exit if nothing selected (Escape pressed)
 [ -z "$selected" ] && exit 0
 
-# Detect focused monitor output and height dynamically
-FOCUSED_OUTPUT=""
-MON_HEIGHT=""
-if command -v hyprctl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-    MON_JSON=$(hyprctl monitors -j 2>/dev/null || true)
-    IFS=$'\t' read -r FOCUSED_OUTPUT MON_HEIGHT < <(
-        printf '%s' "$MON_JSON" | jq -r '
-            (([.[] | select(.focused == true)] | .[0]) // .[0] // empty)
-            | [(.name // ""), (.height // "")]
-            | @tsv
-        ' 2>/dev/null || true
-    )
-fi
-RES_TAG="${MON_HEIGHT:+${MON_HEIGHT}p}"
-RES_TAG="${RES_TAG:-display}"
-
-# Parse selection
 case "$selected" in
-    "30fps • 256kbps")
-        FPS=30
-        AUDIO_CODEC="aac"
-        AUDIO_BITRATE="256k"
-        NO_AUDIO=false
-        EXT="mp4"
-        MODE_TAG="256kbps"
+    "1080p • Lossless")
+        SCALE_MODE="1080p"
         ;;
-    "30fps • Lossless")
-        FPS=30
-        AUDIO_CODEC="flac"
-        AUDIO_BITRATE=""
-        NO_AUDIO=false
-        EXT="mkv"
-        MODE_TAG="lossless"
-        ;;
-    "30fps • No Audio")
-        FPS=30
-        NO_AUDIO=true
-        EXT="mp4"
-        MODE_TAG="no-audio"
-        ;;
-    "60fps • 256kbps")
-        FPS=60
-        AUDIO_CODEC="aac"
-        AUDIO_BITRATE="256k"
-        NO_AUDIO=false
-        EXT="mp4"
-        MODE_TAG="256kbps"
-        ;;
-    "60fps • Lossless")
-        FPS=60
-        AUDIO_CODEC="flac"
-        AUDIO_BITRATE=""
-        NO_AUDIO=false
-        EXT="mkv"
-        MODE_TAG="lossless"
-        ;;
-    "60fps • No Audio")
-        FPS=60
-        NO_AUDIO=true
-        EXT="mp4"
-        MODE_TAG="no-audio"
+    "Native • Lossless")
+        SCALE_MODE="native"
         ;;
     *)
         exit 1
         ;;
 esac
 
-LABEL="${FPS}fps-${RES_TAG}-${MODE_TAG}"
+# Detect focused monitor output and physical resolution dynamically
+FOCUSED_OUTPUT=""
+MON_WIDTH=""
+MON_HEIGHT=""
+if command -v hyprctl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+    MON_JSON=$(hyprctl monitors -j 2>/dev/null || true)
+    IFS=$'\t' read -r FOCUSED_OUTPUT MON_WIDTH MON_HEIGHT < <(
+        printf '%s' "$MON_JSON" | jq -r '
+            (([.[] | select(.focused == true)] | .[0]) // .[0] // empty)
+            | [(.name // ""), (.width // ""), (.height // "")]
+            | @tsv
+        ' 2>/dev/null || true
+    )
+fi
 
-# Generate filename with timestamp
+FPS=60
+GOP=120
+EXT="mkv"
+TARGET_W=""
+TARGET_H=""
+NEEDS_SCALE=false
+
+if [ "$SCALE_MODE" = "1080p" ]; then
+    if [[ "$MON_WIDTH" =~ ^[0-9]+$ && "$MON_HEIGHT" =~ ^[0-9]+$ && "$MON_WIDTH" -gt 0 && "$MON_HEIGHT" -gt 0 ]]; then
+        if [ "$MON_WIDTH" -ge "$MON_HEIGHT" ] && [ "$MON_HEIGHT" -gt 1080 ]; then
+            TARGET_H=1080
+            TARGET_W=$(awk -v w="$MON_WIDTH" -v h="$MON_HEIGHT" 'BEGIN { print int((w * 1080 / h) / 2 + 0.5) * 2 }')
+            NEEDS_SCALE=true
+        elif [ "$MON_HEIGHT" -gt "$MON_WIDTH" ] && [ "$MON_WIDTH" -gt 1080 ]; then
+            TARGET_W=1080
+            TARGET_H=$(awk -v w="$MON_WIDTH" -v h="$MON_HEIGHT" 'BEGIN { print int((h * 1080 / w) / 2 + 0.5) * 2 }')
+            NEEDS_SCALE=true
+        else
+            TARGET_W="$MON_WIDTH"
+            TARGET_H="$MON_HEIGHT"
+        fi
+        RES_TAG="${TARGET_W}x${TARGET_H}"
+    else
+        TARGET_W="-2"
+        TARGET_H="1080"
+        NEEDS_SCALE=true
+        RES_TAG="1080p"
+    fi
+else
+    if [[ "$MON_WIDTH" =~ ^[0-9]+$ && "$MON_HEIGHT" =~ ^[0-9]+$ && "$MON_WIDTH" -gt 0 && "$MON_HEIGHT" -gt 0 ]]; then
+        RES_TAG="${MON_WIDTH}x${MON_HEIGHT}"
+    elif [[ -n "$MON_HEIGHT" ]]; then
+        RES_TAG="${MON_HEIGHT}p"
+    else
+        RES_TAG="native"
+    fi
+fi
+
+LABEL="${FPS}fps-${RES_TAG}-lossless"
 FILENAME="recording-$(date +%Y-%m-%d_%H-%M-%S).$EXT"
 OUTPUT="$RECORDINGS_DIR/$FILENAME"
 
@@ -164,40 +154,41 @@ detect_encoder() {
     return 1
 }
 
-if [ "$FPS" -eq 30 ]; then
-    BITRATE="8M"
-    GOP="60"
+# Lossless FLAC audio at low CPU compression level for minimal gaming overhead
+DEFAULT_SINK=$(pactl get-default-sink 2>/dev/null || true)
+if [ -n "$DEFAULT_SINK" ]; then
+    AUDIO_PARAMS=("--audio=${DEFAULT_SINK}.monitor" "-R" "48000" "-C" "flac" "-P" "compression_level=1")
 else
-    BITRATE="15M"
-    GOP="120"
+    AUDIO_PARAMS=("--audio" "-R" "48000" "-C" "flac" "-P" "compression_level=1")
 fi
 
-# Build audio parameters and command
-AUDIO_PARAMS=()
-if [ "$NO_AUDIO" != true ]; then
-    DEFAULT_SINK=$(pactl get-default-sink 2>/dev/null || true)
-    if [ -n "$DEFAULT_SINK" ]; then
-        AUDIO_SOURCE="${DEFAULT_SINK}.monitor"
-        AUDIO_PARAMS=("--audio=$AUDIO_SOURCE" "-R" "48000" "-C" "$AUDIO_CODEC")
-    else
-        AUDIO_PARAMS=("--audio" "-R" "48000" "-C" "$AUDIO_CODEC")
-    fi
-    if [ -n "$AUDIO_BITRATE" ]; then
-        AUDIO_PARAMS+=("-P" "b=$AUDIO_BITRATE")
-    fi
-fi
-
-# Detect encoder and configure params
+# Detect encoder and configure optimal DMA-BUF hardware or safe CPU fallback params
 read -r VIDEO_CODEC PIX_FMT DETECTED_RENDER_DEV < <(detect_encoder || true)
 
-if [[ "$VIDEO_CODEC" == "libx264" ]]; then
-    notify-send "Screen Record" "Hardware encoder unavailable. Using software encoding (libx264)" -t 3000
+SCALE_EXPR=""
+if [ "$NEEDS_SCALE" = true ] && [ -n "$TARGET_W" ] && [ -n "$TARGET_H" ]; then
+    SCALE_EXPR="w=${TARGET_W}:h=${TARGET_H}"
 fi
 
-CODEC_PARAMS=("-p" "pix_fmt=$PIX_FMT" "-p" "b=$BITRATE" "-p" "g=$GOP")
-if [[ "$VIDEO_CODEC" == "h264_vaapi" && -n "${DETECTED_RENDER_DEV:-}" && -e "${DETECTED_RENDER_DEV}" ]]; then
-    CODEC_PARAMS+=("-d" "$DETECTED_RENDER_DEV")
-fi
+CODEC_PARAMS=("-b" "0" "-p" "g=$GOP")
+case "$VIDEO_CODEC" in
+    h264_vaapi)
+        VAAPI_FILTER="scale_vaapi=${SCALE_EXPR:+${SCALE_EXPR}:}format=nv12:out_range=full"
+        CODEC_PARAMS+=("-F" "$VAAPI_FILTER" "-p" "rc_mode=CQP" "-p" "qp=20" "-p" "async_depth=4")
+        if [[ -n "${DETECTED_RENDER_DEV:-}" && -e "${DETECTED_RENDER_DEV}" ]]; then
+            CODEC_PARAMS+=("-d" "$DETECTED_RENDER_DEV")
+        fi
+        ;;
+    h264_nvenc)
+        [ -n "$SCALE_EXPR" ] && CODEC_PARAMS+=("-F" "scale=${SCALE_EXPR}:flags=bilinear")
+        CODEC_PARAMS+=("-x" "yuv420p" "-p" "preset=p4" "-p" "rc=vbr" "-p" "cq=20")
+        ;;
+    libx264)
+        notify-send "Screen Record" "Hardware encoder unavailable. Using software encoding (libx264)" -t 3000
+        CODEC_PARAMS+=("--no-dmabuf" "-x" "yuv420p" "-p" "preset=veryfast" "-p" "crf=20")
+        [ -n "$SCALE_EXPR" ] && CODEC_PARAMS+=("-F" "scale=${SCALE_EXPR}:flags=bilinear")
+        ;;
+esac
 
 OUTPUT_PARAMS=()
 if [[ -n "$FOCUSED_OUTPUT" ]]; then

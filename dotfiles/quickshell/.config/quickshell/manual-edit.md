@@ -7,7 +7,7 @@ Quick single-variable configuration reference for the HyprVibe Quickshell bar.
 ## 1. Behavior & Timers
 
 ### Hover Reveal Delay (Top Edge Mist-Hover Filter)
-- **File**: `dotfiles/quickshell/.config/quickshell/plugins/bar/Bar.qml`
+- **File**: `dotfiles/quickshell/.config/quickshell/Frontend/Bar/Bar.qml`
 - **Object**: `Timer { id: revealTimer }`
 - **Property**: `interval`
 - **Values**:
@@ -17,7 +17,7 @@ Quick single-variable configuration reference for the HyprVibe Quickshell bar.
   - `1000`: 1s deliberate hover required.
 
 ### Autohide Hold Duration (Time Active Before Hiding)
-- **File**: `dotfiles/quickshell/.config/quickshell/plugins/bar/Bar.qml`
+- **File**: `dotfiles/quickshell/.config/quickshell/Frontend/Bar/Bar.qml`
 - **Object**: `Timer { id: autohideTimer }`
 - **Property**: `interval`
 - **Values**:
@@ -35,7 +35,7 @@ Quick single-variable configuration reference for the HyprVibe Quickshell bar.
   - `true`: Bar autohides when mouse leaves; reveals on top hover or `SUPER+W`.
 
 ### Top Edge Trigger Thickness (Hover Detection Zone)
-- **File**: `dotfiles/quickshell/.config/quickshell/plugins/bar/Bar.qml`
+- **File**: `dotfiles/quickshell/.config/quickshell/Frontend/Bar/Bar.qml`
 - **Object**: `PanelWindow { id: edgeTriggerWindow }`
 - **Property**: `implicitHeight`
 - **Values**:
@@ -48,7 +48,7 @@ Quick single-variable configuration reference for the HyprVibe Quickshell bar.
 ## 2. Layout & Compositor Modes
 
 ### Overlay vs Push Mode (Window Resizing / TUI Flicker)
-- **File**: `dotfiles/quickshell/.config/quickshell/plugins/bar/Bar.qml`
+- **File**: `dotfiles/quickshell/.config/quickshell/Frontend/Bar/Bar.qml`
 - **Object**: `component BarPanel: PanelWindow`
 - **Property**: `exclusionMode`
 - **Values**:
@@ -68,7 +68,7 @@ Quick single-variable configuration reference for the HyprVibe Quickshell bar.
 ## 3. Visuals & Animations
 
 ### Bar Background Opacity (Transparency Level)
-- **File**: `dotfiles/quickshell/.config/quickshell/plugins/bar/Bar.qml`
+- **File**: `dotfiles/quickshell/.config/quickshell/Frontend/Bar/Bar.qml`
 - **Object**: `component BarPanel: PanelWindow`
 - **Property**: `color`
 - **Values**:
@@ -78,7 +78,7 @@ Quick single-variable configuration reference for the HyprVibe Quickshell bar.
   - `Util.alpha(root.background, 0.0)`: 100% transparent (only widgets visible).
 
 ### Slide Animation Speed
-- **File**: `dotfiles/quickshell/.config/quickshell/plugins/bar/Bar.qml`
+- **File**: `dotfiles/quickshell/.config/quickshell/Frontend/Bar/Bar.qml`
 - **Object**: `component BarPanel: PanelWindow` -> `margins` -> `NumberAnimation`
 - **Property**: `duration`
 - **Values**:
@@ -109,8 +109,8 @@ Quick single-variable configuration reference for the HyprVibe Quickshell bar.
   - `"ddd, MMM d  h:mm AP"`: Compact date and time, e.g., `Fri, Oct 16  4:10 PM`
 
 ### Backlight Scroll Step Size
-- **File**: `dotfiles/quickshell/.config/quickshell/plugins/bar/widgets/Backlight.qml`
-- **Object**: `function adjustBrightness(delta)`
+- **File**: `dotfiles/quickshell/.config/quickshell/Backend/Services/TelemetryService.qml`
+- **Object**: `function adjustBacklight(delta)`
 - **Variable**: `var step`
 - **Values**:
   - `1` *(default)*: 1% brightness change per mouse scroll tick.

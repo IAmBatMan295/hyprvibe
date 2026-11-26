@@ -48,7 +48,6 @@ esac
 dmenu_cmd() {
   hyprvibe-dmenu -dmenu \
     --preset profiles \
-    -p "Profile ($active)" \
     -markup-rows \
     -select "$active_label"
 }

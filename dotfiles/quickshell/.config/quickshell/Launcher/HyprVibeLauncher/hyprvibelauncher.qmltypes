@@ -16,6 +16,8 @@ Module {
         Property { name: "matchingMode"; type: "QString"; read: "matchingMode"; write: "setMatchingMode"; notify: "matchingModeChanged" }
         Property { name: "caseSensitive"; type: "bool"; read: "caseSensitive"; write: "setCaseSensitive"; notify: "caseSensitiveChanged" }
         Property { name: "sortEnabled"; type: "bool"; read: "sortEnabled"; write: "setSortEnabled"; notify: "sortEnabledChanged" }
+        Property { name: "historyPath"; type: "QString"; read: "historyPath"; write: "setHistoryPath"; notify: "historyPathChanged" }
+        Property { name: "highlightColor"; type: "QString"; read: "highlightColor"; write: "setHighlightColor"; notify: "highlightColorChanged" }
         Property { name: "errorCount"; type: "int"; read: "errorCount"; notify: "errorCountChanged"; isReadonly: true }
         Signal { name: "countChanged" }
         Signal { name: "totalCountChanged" }
@@ -24,6 +26,8 @@ Module {
         Signal { name: "matchingModeChanged" }
         Signal { name: "caseSensitiveChanged" }
         Signal { name: "sortEnabledChanged" }
+        Signal { name: "historyPathChanged" }
+        Signal { name: "highlightColorChanged" }
         Signal { name: "errorCountChanged" }
         Signal {
             name: "ipcRequestReceived"
@@ -94,6 +98,207 @@ Module {
             name: "runSynthetic10kBenchmark"
             type: "qlonglong"
             Parameter { name: "sampleQuery"; type: "QString" }
+        }
+    }
+    Component {
+        file: "SystemCore.hpp"
+        name: "SystemCore"
+        accessSemantics: "reference"
+        prototype: "QObject"
+        exports: ["HyprVibeLauncher/SystemCore 1.0"]
+        isSingleton: true
+        exportMetaObjectRevisions: [256]
+        Property { name: "powerProfileAvailable"; type: "bool"; read: "powerProfileAvailable"; notify: "powerProfileChanged"; isReadonly: true }
+        Property { name: "powerProfile"; type: "QString"; read: "powerProfile"; notify: "powerProfileChanged"; isReadonly: true }
+        Property { name: "audioVolumeSink"; type: "QString"; read: "audioVolumeSink"; notify: "audioStateChanged"; isReadonly: true }
+        Property { name: "audioSinkAvailability"; type: "QVariantMap"; read: "audioSinkAvailability"; notify: "audioStateChanged"; isReadonly: true }
+        Property { name: "wifiBandCurrent"; type: "QString"; read: "wifiBandCurrent"; notify: "wifiBandUpdated"; isReadonly: true }
+        Property { name: "wifiBandSelected"; type: "QString"; read: "wifiBandSelected"; notify: "wifiBandUpdated"; isReadonly: true }
+        Property { name: "wifiBandAvailable"; type: "QStringList"; read: "wifiBandAvailable"; notify: "wifiBandUpdated"; isReadonly: true }
+        Signal { name: "powerProfileChanged" }
+        Signal { name: "audioStateChanged" }
+        Signal {
+            name: "bluetoothPairPrompt"
+            Parameter { name: "address"; type: "QString" }
+            Parameter { name: "promptType"; type: "QString" }
+            Parameter { name: "passkey"; type: "QString" }
+        }
+        Signal {
+            name: "bluetoothPairFinished"
+            Parameter { name: "address"; type: "QString" }
+            Parameter { name: "success"; type: "bool" }
+            Parameter { name: "error"; type: "QString" }
+        }
+        Signal { name: "wifiBandUpdated" }
+        Signal {
+            name: "wifiBandSetFinished"
+            Parameter { name: "success"; type: "bool" }
+            Parameter { name: "error"; type: "QString" }
+        }
+        Signal {
+            name: "wifiEnterpriseFinished"
+            Parameter { name: "ssid"; type: "QString" }
+            Parameter { name: "success"; type: "bool" }
+            Parameter { name: "error"; type: "QString" }
+        }
+        Method { name: "refreshAudioState" }
+        Method {
+            name: "setDefaultAudioSink"
+            Parameter { name: "sinkName"; type: "QString" }
+        }
+        Method {
+            name: "setDefaultAudioSource"
+            Parameter { name: "sourceName"; type: "QString" }
+        }
+        Method { name: "refreshPowerProfile" }
+        Method {
+            name: "setPowerProfile"
+            type: "bool"
+            Parameter { name: "profile"; type: "QString" }
+        }
+        Method {
+            name: "setBluetoothEnabled"
+            Parameter { name: "enabled"; type: "bool" }
+        }
+        Method {
+            name: "forgetBluetoothDevice"
+            Parameter { name: "address"; type: "QString" }
+        }
+        Method {
+            name: "pairBluetoothDevice"
+            Parameter { name: "address"; type: "QString" }
+        }
+        Method {
+            name: "confirmBluetoothPair"
+            Parameter { name: "response"; type: "QString" }
+        }
+        Method { name: "cancelBluetoothPair" }
+        Method { name: "refreshWifiBand" }
+        Method {
+            name: "setWifiBand"
+            Parameter { name: "targetBand"; type: "QString" }
+        }
+        Method {
+            name: "connectWifiEnterprise"
+            Parameter { name: "ssid"; type: "QString" }
+            Parameter { name: "identity"; type: "QString" }
+            Parameter { name: "password"; type: "QString" }
+        }
+        Method {
+            name: "sampleCpu"
+            type: "QVariantMap"
+            Parameter { name: "procRoot"; type: "QString" }
+            Parameter { name: "sysCpuRoot"; type: "QString" }
+        }
+        Method { name: "sampleCpu"; type: "QVariantMap" }
+        Method {
+            name: "readMemory"
+            type: "QVariantMap"
+            Parameter { name: "meminfoPath"; type: "QString" }
+        }
+        Method { name: "readMemory"; type: "QVariantMap" }
+        Method {
+            name: "readBacklight"
+            type: "QVariantMap"
+            Parameter { name: "backlightRoot"; type: "QString" }
+        }
+        Method { name: "readBacklight"; type: "QVariantMap" }
+        Method {
+            name: "setBacklightPercent"
+            type: "bool"
+            Parameter { name: "percent"; type: "int" }
+            Parameter { name: "backlightRoot"; type: "QString" }
+        }
+        Method {
+            name: "setBacklightPercent"
+            type: "bool"
+            Parameter { name: "percent"; type: "int" }
+        }
+        Method {
+            name: "readBatterySysfs"
+            type: "QVariantMap"
+            Parameter { name: "powerSupplyRoot"; type: "QString" }
+        }
+        Method { name: "readBatterySysfs"; type: "QVariantMap" }
+        Method {
+            name: "isMpdListening"
+            type: "bool"
+            Parameter { name: "procNetTcpPath"; type: "QString" }
+            Parameter { name: "runtimeDir"; type: "QString" }
+        }
+        Method { name: "isMpdListening"; type: "bool" }
+        Method { name: "listFontFamilies"; type: "QStringList" }
+        Method { name: "monospaceFontFamily"; type: "QString" }
+        Method {
+            name: "listThemes"
+            type: "QStringList"
+            Parameter { name: "repoThemesDir"; type: "QString" }
+            Parameter { name: "userThemesDir"; type: "QString" }
+        }
+        Method {
+            name: "pathExists"
+            type: "bool"
+            Parameter { name: "path"; type: "QString" }
+        }
+        Method {
+            name: "ensureDir"
+            type: "bool"
+            Parameter { name: "path"; type: "QString" }
+        }
+        Method {
+            name: "readFileText"
+            type: "QString"
+            Parameter { name: "path"; type: "QString" }
+        }
+        Method {
+            name: "writeFileAtomic"
+            type: "bool"
+            Parameter { name: "path"; type: "QString" }
+            Parameter { name: "content"; type: "QString" }
+        }
+        Method {
+            name: "parseShellToml"
+            type: "QVariantMap"
+            Parameter { name: "raw"; type: "QString" }
+        }
+        Method {
+            name: "renderShellToml"
+            type: "QString"
+            Parameter { name: "values"; type: "QVariantMap" }
+        }
+        Method { name: "defaultHyprOverrides"; type: "QVariantMap" }
+        Method {
+            name: "parseHyprOverrides"
+            type: "QVariantMap"
+            Parameter { name: "raw"; type: "QString" }
+        }
+        Method {
+            name: "renderHyprOverrides"
+            type: "QString"
+            Parameter { name: "rawState"; type: "QVariantMap" }
+        }
+        Method {
+            name: "layoutHasWidget"
+            type: "bool"
+            Parameter { name: "layout"; type: "QVariantMap" }
+            Parameter { name: "region"; type: "QString" }
+            Parameter { name: "widgetId"; type: "QString" }
+        }
+        Method {
+            name: "toggleBarWidget"
+            type: "QVariantMap"
+            Parameter { name: "layout"; type: "QVariantMap" }
+            Parameter { name: "region"; type: "QString" }
+            Parameter { name: "widgetId"; type: "QString" }
+            Parameter { name: "enabled"; type: "bool" }
+        }
+        Method {
+            name: "moveBarWidget"
+            type: "QVariantMap"
+            Parameter { name: "layout"; type: "QVariantMap" }
+            Parameter { name: "region"; type: "QString" }
+            Parameter { name: "fromIndex"; type: "int" }
+            Parameter { name: "toIndex"; type: "int" }
         }
     }
 }
