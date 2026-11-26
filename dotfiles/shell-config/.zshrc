@@ -134,4 +134,5 @@ cmclean() {
 
 # Added by Antigravity CLI installer
 export PATH="$HOME/.local/bin:$PATH"
+export QML_IMPORT_PATH="$HOME/.config/quickshell/Launcher${QML_IMPORT_PATH:+:$QML_IMPORT_PATH}"
 

@@ -1,6 +1,8 @@
 hl.on("hyprland.start", function()
-    hl.exec_cmd(os.getenv("HOME") .. "/.config/hypr/scripts/wallpaper-changer.sh &")
-    hl.exec_cmd("quickshell &")
+    local home = os.getenv("HOME") or ""
+    hl.exec_cmd(home .. "/.config/hypr/scripts/wallpaper-changer.sh &")
+    -- hl.exec_cmd("quickshell &")
+    hl.exec_cmd("QML_IMPORT_PATH=" .. home .. "/.config/quickshell/Launcher${QML_IMPORT_PATH:+:$QML_IMPORT_PATH} quickshell &")
     hl.exec_cmd("/usr/lib/polkit-kde-authentication-agent-1 &")
     hl.exec_cmd("hypridle &")
     hl.exec_cmd("dunst &")

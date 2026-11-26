@@ -479,7 +479,6 @@ rhash
 ripgrep
 ripgrep-all
 rmpc
-rofi
 rsync
 rust
 rust-analyzer

@@ -25,11 +25,11 @@ fi
 
 FINAL_MENU=$(printf "%s\n%s" "$MENU_ITEMS" "$CLEAR_OPTION")
 
-# 3. Launch Rofi with the Card Theme
-SELECTED_ITEM=$(printf '%s\n' "$FINAL_MENU" | rofi -dmenu \
-    -theme "${HOME}/.config/rofi/clipboard-menu.rasi" \
+# 3. Launch Quickshell C++ launcher
+SELECTED_ITEM=$(printf '%s\n' "$FINAL_MENU" | hyprvibe-dmenu -dmenu \
+    --preset clipboard \
     -p " " \
-    -i)
+    -i || true)
 
 # 4. Logic
 if [ -z "$SELECTED_ITEM" ]; then exit 0; fi

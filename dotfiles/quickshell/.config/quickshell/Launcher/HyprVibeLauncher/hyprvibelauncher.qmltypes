@@ -1,0 +1,99 @@
+import QtQuick.tooling 1.2
+
+// Static QML tooling metadata for HyprVibeLauncher so qmllint validates cleanly in sandboxes.
+Module {
+    Component {
+        file: "LauncherModel.hpp"
+        name: "LauncherModel"
+        accessSemantics: "reference"
+        prototype: "QAbstractListModel"
+        exports: ["HyprVibeLauncher/LauncherModel 1.0"]
+        exportMetaObjectRevisions: [256]
+        Property { name: "count"; type: "int"; read: "count"; notify: "countChanged"; isReadonly: true }
+        Property { name: "totalCount"; type: "int"; read: "totalCount"; notify: "totalCountChanged"; isReadonly: true }
+        Property { name: "lastFilterUs"; type: "qlonglong"; read: "lastFilterUs"; notify: "lastFilterUsChanged"; isReadonly: true }
+        Property { name: "query"; type: "QString"; read: "query"; write: "setQuery"; notify: "queryChanged" }
+        Property { name: "matchingMode"; type: "QString"; read: "matchingMode"; write: "setMatchingMode"; notify: "matchingModeChanged" }
+        Property { name: "caseSensitive"; type: "bool"; read: "caseSensitive"; write: "setCaseSensitive"; notify: "caseSensitiveChanged" }
+        Property { name: "sortEnabled"; type: "bool"; read: "sortEnabled"; write: "setSortEnabled"; notify: "sortEnabledChanged" }
+        Property { name: "errorCount"; type: "int"; read: "errorCount"; notify: "errorCountChanged"; isReadonly: true }
+        Signal { name: "countChanged" }
+        Signal { name: "totalCountChanged" }
+        Signal { name: "lastFilterUsChanged" }
+        Signal { name: "queryChanged" }
+        Signal { name: "matchingModeChanged" }
+        Signal { name: "caseSensitiveChanged" }
+        Signal { name: "sortEnabledChanged" }
+        Signal { name: "errorCountChanged" }
+        Signal {
+            name: "ipcRequestReceived"
+            Parameter { name: "meta"; type: "QVariantMap" }
+        }
+        Signal { name: "ipcClientCancelled" }
+        Signal {
+            name: "ipcProtocolError"
+            Parameter { name: "reason"; type: "QString" }
+        }
+        Signal {
+            name: "watchedPathChanged"
+            Parameter { name: "path"; type: "QString" }
+        }
+        Method {
+            name: "startIpcServer"
+            type: "bool"
+            Parameter { name: "socketPath"; type: "QString" }
+        }
+        Method {
+            name: "replyIpc"
+            Parameter { name: "reply"; type: "QString" }
+        }
+        Method { name: "hasActiveIpc"; type: "bool" }
+        Method {
+            name: "watchPath"
+            Parameter { name: "path"; type: "QString" }
+        }
+        Method {
+            name: "loadItems"
+            Parameter { name: "items"; type: "QVariantList" }
+        }
+        Method {
+            name: "loadLines"
+            type: "int"
+            Parameter { name: "lines"; type: "QStringList" }
+            Parameter { name: "stripMarkup"; type: "bool" }
+            Parameter { name: "parseNumbers"; type: "bool" }
+            Parameter { name: "activeMatch"; type: "QString" }
+        }
+        Method { name: "clear" }
+        Method {
+            name: "actionAt"
+            type: "QString"
+            Parameter { name: "row"; type: "int" }
+        }
+        Method {
+            name: "labelAt"
+            type: "QString"
+            Parameter { name: "row"; type: "int" }
+        }
+        Method {
+            name: "formatSelection"
+            type: "QString"
+            Parameter { name: "row"; type: "int" }
+            Parameter { name: "formatSpec"; type: "QString" }
+        }
+        Method {
+            name: "rowAt"
+            type: "QVariantMap"
+            Parameter { name: "row"; type: "int" }
+        }
+        Method {
+            name: "recordLaunch"
+            Parameter { name: "key"; type: "QString" }
+        }
+        Method {
+            name: "runSynthetic10kBenchmark"
+            type: "qlonglong"
+            Parameter { name: "sampleQuery"; type: "QString" }
+        }
+    }
+}

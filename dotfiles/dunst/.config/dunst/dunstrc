@@ -49,7 +49,7 @@
     # History & Interactions
     sticky_history = true
     history_length = 20
-    dmenu = /usr/bin/rofi -dmenu -p 'Notification Action:'
+    dmenu = hyprvibe-dmenu -dmenu -p 'Notification Action:'
     browser = /usr/bin/xdg-open
 
     # Mouse actions

@@ -414,13 +414,8 @@ cmd_menu() {
     local current_title
     current_title="$(format_theme_title "$current")"
 
-    local rasi_file="${HOME}/.config/rofi/theme-switcher.rasi"
     local selected=""
-    if [[ -f "$rasi_file" ]]; then
-        selected=$(printf '%s\n' "$display_themes" | rofi -dmenu -markup-rows -theme "$rasi_file" -select "$current_title" 2>/dev/null || true)
-    else
-        selected=$(printf '%s\n' "$display_themes" | rofi -dmenu -markup-rows -p "Theme" -select "$current_title" 2>/dev/null || true)
-    fi
+    selected=$(printf '%s\n' "$display_themes" | hyprvibe-dmenu -dmenu --preset theme -markup-rows -p "Theme" -select "$current_title" 2>/dev/null || true)
 
     # Strip any Pango markup tags from selection and map title directly back to directory slug
     selected=$(printf '%s' "$selected" | sed -E 's/<[^>]*>//g')

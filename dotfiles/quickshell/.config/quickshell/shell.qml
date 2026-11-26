@@ -5,6 +5,7 @@ import Quickshell.Io
 
 import qs.Commons
 
+import "Launcher"
 import "plugins/bar"
 import "services"
 import "services/AuthServiceStore.js" as AuthServiceStore
@@ -1446,6 +1447,13 @@ ShellRoot {
     } else {
       finalize()
     }
+  }
+
+  // ---------------------------------------------------------- unified single-process launcher
+  // Hosted inside this ShellRoot alongside Bar, Panels, Services, and future Settings GUI
+  // so every Quickshell component shares one Qt/GPU context, ThemeColor, Style, and DesktopEntries.
+  LauncherHost {
+    id: launcherHost
   }
 
   IpcHandler {

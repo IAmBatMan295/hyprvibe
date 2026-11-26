@@ -5,14 +5,13 @@ LOGOUT="  Logout"
 RESTART="  Reboot"
 SHUTDOWN="  Shutdown"
 
-rofi_cmd() {
-  rofi -dmenu \
-    -theme ~/.config/rofi/power-menu.rasi
+dmenu_cmd() {
+  hyprvibe-dmenu -dmenu --preset power
 }
 
-run_rofi() {
+run_launcher() {
   # order preserved exactly as in original: lock → logout → restart → shutdown
-  echo -e "$LOCK\n$LOGOUT\n$RESTART\n$SHUTDOWN" | rofi_cmd
+  printf '%s\n%s\n%s\n%s\n' "$LOCK" "$LOGOUT" "$RESTART" "$SHUTDOWN" | dmenu_cmd
 }
 
 run_cmd() {
@@ -33,7 +32,7 @@ run_cmd() {
   esac
 }
 
-chosen="$(run_rofi)"
+chosen="$(run_launcher || true)"
 
 case $chosen in
 $SHUTDOWN)

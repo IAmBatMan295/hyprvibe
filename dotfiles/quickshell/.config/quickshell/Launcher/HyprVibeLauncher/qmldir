@@ -1,0 +1,3 @@
+module HyprVibeLauncher
+plugin hyprvibelauncher
+typeinfo hyprvibelauncher.qmltypes

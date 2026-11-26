@@ -142,7 +142,7 @@ check_symlinks_and_state() {
 
   local cfg_dirs=(
     hypr nvim foot tmux btop dunst gtk-3.0 gtk-4.0
-    madsnake mpd mpv ohmyposh quickshell rmpc rofi Thunar
+    madsnake mpd mpv ohmyposh quickshell rmpc Thunar
   )
   local d
   for d in "${cfg_dirs[@]}"; do
@@ -205,7 +205,7 @@ check_packages() {
 
   local -a required_cmds=(
     Hyprland quickshell hyprlock hypridle hyprsunset
-    awww dunst rofi foot tmux nvim zsh stow jq
+    awww dunst hyprvibe-dmenu foot tmux nvim zsh stow jq
     grim slurp wl-copy cliphist playerctl wpctl iw zenity
     inotifywait edid-decode luac
   )

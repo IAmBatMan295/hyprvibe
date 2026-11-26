@@ -1,6 +1,6 @@
 local terminal = "foot"
 local fileManager = "thunar"
-local menu = "rofi -show drun"
+local menu = "hyprvibe-dmenu --preset drun --toggle"
 local mainMod = "SUPER"
 
 hl.bind(mainMod .. " + T", hl.dsp.exec_cmd("madsnake"))

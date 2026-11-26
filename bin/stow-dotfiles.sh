@@ -33,7 +33,6 @@ PACKAGES=(
     ohmyposh
     quickshell
     rmpc
-    rofi
     sd-server
     shell-config
     tmux
@@ -164,6 +163,15 @@ main() {
     done
 
     log_phase "Stow Apply"
+    if [[ "${HYPRVIBE_SKIP_LAUNCHER_BUILD:-0}" != "1" && -x "${SCRIPT_DIR}/build-launcher.sh" ]] && command -v cmake >/dev/null 2>&1 && command -v g++ >/dev/null 2>&1; then
+        local _l_so="${DOTFILES_DIR}/quickshell/.config/quickshell/Launcher/HyprVibeLauncher/libhyprvibelauncher.so"
+        local _l_bin="${USER_HOME}/.local/bin/hyprvibe-dmenu"
+        local _l_src="${DOTFILES_DIR}/quickshell/.config/quickshell/Launcher/engine"
+        if [[ ! -f "$_l_so" || ! -x "$_l_bin" || "${_l_src}/LauncherModel.cpp" -nt "$_l_so" || "${_l_src}/hyprvibe-dmenu.cpp" -nt "$_l_bin" ]]; then
+            USER_HOME="$USER_HOME" "${SCRIPT_DIR}/build-launcher.sh" || log_warn "Launcher C++ build skipped or failed"
+        fi
+    fi
+
     log_info "Stowing dotfiles packages into ${USER_HOME} (--no-folding)"
     cd "$DOTFILES_DIR"
     rm -f "${DOTFILES_DIR}/dunst/.config/dunst/dunstrc.d/00-hyprvibe-theme.conf" 2>/dev/null || true

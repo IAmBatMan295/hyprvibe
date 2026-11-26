@@ -11,3 +11,12 @@ local cur_path = os.getenv("PATH") or "/usr/local/sbin:/usr/local/bin:/usr/bin"
 if home and not (":" .. cur_path .. ":"):find(":" .. home .. "/.local/bin:", 1, true) then
 	hl.env("PATH", home .. "/.local/bin:" .. cur_path)
 end
+if home then
+	local launcher_qml = home .. "/.config/quickshell/Launcher"
+	local cur_qml = os.getenv("QML_IMPORT_PATH") or ""
+	if cur_qml == "" then
+		hl.env("QML_IMPORT_PATH", launcher_qml)
+	elseif not (":" .. cur_qml .. ":"):find(":" .. launcher_qml .. ":", 1, true) then
+		hl.env("QML_IMPORT_PATH", launcher_qml .. ":" .. cur_qml)
+	end
+end

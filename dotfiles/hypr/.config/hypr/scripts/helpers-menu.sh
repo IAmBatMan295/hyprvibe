@@ -12,12 +12,6 @@ if [[ ! -d "$HELPERS_DIR" ]]; then
     exit 1
 fi
 
-# Theme path
-THEME_FILE="${HOME}/.config/rofi/helpers-menu.rasi"
-if [[ ! -f "$THEME_FILE" ]]; then
-    THEME_FILE="${ROOT_DIR}/dotfiles/rofi/.config/rofi/helpers-menu.rasi"
-fi
-
 # Dynamically discover all executable helpers in HELPERS_DIR
 ENTRIES=()
 for script in "$HELPERS_DIR"/*.sh; do
@@ -111,11 +105,11 @@ if [[ "${1:-}" == "--dry-run" ]]; then
     exit 1
 fi
 
-# Launch Rofi
-SELECTED=$(echo "$MENU_ITEMS" | rofi -dmenu \
-    -theme "$THEME_FILE" \
+# Launch Quickshell C++ launcher
+SELECTED=$(printf '%s\n' "$MENU_ITEMS" | hyprvibe-dmenu -dmenu \
+    --preset helpers \
     -p " " \
-    -i)
+    -i || true)
 
 if [[ -z "$SELECTED" ]]; then
     exit 0

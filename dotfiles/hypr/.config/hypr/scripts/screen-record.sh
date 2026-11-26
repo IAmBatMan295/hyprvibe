@@ -51,8 +51,8 @@ profiles=(
     "60fps • No Audio"
 )
 
-# Show rofi menu (auto-size, 6 lines)
-selected=$(printf '%s\n' "${profiles[@]}" | rofi -dmenu -i -p "Screen Record" -theme-str 'listview {lines: 6;} entry {width: 200px;}')
+# Show Quickshell C++ menu
+selected=$(printf '%s\n' "${profiles[@]}" | hyprvibe-dmenu -dmenu --preset compact -i -p "Screen Record" -l 6 --width 280 || true)
 
 # Exit if nothing selected (Escape pressed)
 [ -z "$selected" ] && exit 0

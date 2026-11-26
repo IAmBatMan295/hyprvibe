@@ -8,3 +8,4 @@ dotfiles/sddm/themes/hyprvibe/assets/
 dotfiles/sddm/themes/hyprvibe/theme.conf
 dotfiles/hypr/.config/hypr/config/monitors.lua
 dotfiles/dunst/.config/dunst/dunstrc.d/00-hyprvibe-theme.conf
+dotfiles/quickshell/.config/quickshell/Launcher/HyprVibeLauncher/*.so

@@ -38,16 +38,23 @@ PERF="<span color=\"$c_perf\">  Performance</span>"
 BAL="<span color=\"$c_bal\">  Balanced</span>"
 SAVE="<span color=\"$c_save\">󰌪  Power Saver</span>"
 
-rofi_cmd() {
-  rofi -dmenu \
+active_label=""
+case "$active" in
+  performance) active_label="  Performance" ;;
+  balanced) active_label="  Balanced" ;;
+  power-saver) active_label="󰌪  Power Saver" ;;
+esac
+
+dmenu_cmd() {
+  hyprvibe-dmenu -dmenu \
+    --preset profiles \
     -p "Profile ($active)" \
     -markup-rows \
-    -theme-str 'listview { lines: 3; }' \
-    -theme "${HOME}/.config/rofi/power-menu.rasi"
+    -select "$active_label"
 }
 
-run_rofi() {
-  printf '%s\n%s\n%s\n' "$PERF" "$BAL" "$SAVE" | rofi_cmd
+run_launcher() {
+  printf '%s\n%s\n%s\n' "$PERF" "$BAL" "$SAVE" | dmenu_cmd
 }
 
 run_cmd() {
@@ -96,7 +103,7 @@ run_cmd() {
   esac
 }
 
-chosen="$(run_rofi || true)"
+chosen="$(run_launcher || true)"
 
 case "$chosen" in
 	*"Performance"*)
