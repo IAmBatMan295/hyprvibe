@@ -110,15 +110,30 @@ QtObject {
   // ----------------------------------------------------------- CPU & Memory
   property string cpuFrequency: "— GHz"
   property string cpuUsage: "0%"
+  property real cpuGhz: 0.0
+  property real cpuMinGhz: 0.0
+  property real cpuMaxGhz: 0.0
+  readonly property real cpuSpeedRatio: {
+    if (cpuMaxGhz <= 0) return 0
+    if (cpuMinGhz > 0 && cpuMaxGhz > cpuMinGhz + 0.05) {
+      return Math.max(0, Math.min(1, (cpuGhz - cpuMinGhz) / (cpuMaxGhz - cpuMinGhz)))
+    }
+    return Math.max(0, Math.min(1, cpuGhz / cpuMaxGhz))
+  }
+  property real cpuUsageRatio: 0.0
   property real _cpuPrevTotal: 0
   property real _cpuPrevIdle: 0
 
   property Process cpuProc: Process {
     command: [
       "sh", "-c",
-      "khz=$(cat /sys/devices/system/cpu/cpufreq/policy*/scaling_cur_freq 2>/dev/null | awk '{s+=$1; c++} END {if(c>0) printf \"%.1f GHz\\n\", (s/c)/1000000}'); " +
-      "if [ -n \"$khz\" ]; then printf '%s\\n' \"$khz\"; " +
-      "else awk '/cpu MHz/ {sum+=$4; count++} END {if (count>0) printf \"%.1f GHz\\n\", sum/count/1000}' /proc/cpuinfo; fi; " +
+      "cur=$(cat /sys/devices/system/cpu/cpufreq/policy*/scaling_cur_freq 2>/dev/null | awk '{s+=$1; c++} END {if(c>0) printf \"%.3f\\n\", (s/c)/1000000}'); " +
+      "if [ -n \"$cur\" ]; then printf 'cur %s\\n' \"$cur\"; " +
+      "else awk '/cpu MHz/ {sum+=$4; count++} END {if (count>0) printf \"cur %.3f\\n\", sum/count/1000}' /proc/cpuinfo; fi; " +
+      "min=$(cat /sys/devices/system/cpu/cpufreq/policy*/cpuinfo_min_freq /sys/devices/system/cpu/cpufreq/policy*/scaling_min_freq 2>/dev/null | awk 'BEGIN{m=999999999} {if($1>0 && $1<m) m=$1} END {if(m<999999999) printf \"%.3f\\n\", m/1000000}'); " +
+      "if [ -n \"$min\" ]; then printf 'min %s\\n' \"$min\"; fi; " +
+      "max=$(cat /sys/devices/system/cpu/cpufreq/policy*/cpuinfo_max_freq /sys/devices/system/cpu/cpufreq/policy*/scaling_max_freq 2>/dev/null | awk 'BEGIN{m=0} {if($1>m) m=$1} END {if(m>0) printf \"%.3f\\n\", m/1000000}'); " +
+      "if [ -n \"$max\" ]; then printf 'max %s\\n' \"$max\"; fi; " +
       "awk '/^cpu / {printf \"cpu %s %s %s %s %s %s %s %s\\n\", $2, $3, $4, $5, $6, $7, $8, $9; exit}' /proc/stat"
     ]
     stdout: StdioCollector {
@@ -127,8 +142,19 @@ QtObject {
         var lines = String(text || "").trim().split("\n")
         for (var li = 0; li < lines.length; li++) {
           var line = lines[li].trim()
-          if (line.indexOf("GHz") !== -1) {
-            root.cpuFrequency = line
+          if (line.indexOf("cur ") === 0) {
+            var curVal = parseFloat(line.substr(4))
+            if (isFinite(curVal) && curVal > 0) {
+              root.cpuGhz = curVal
+              root.cpuFrequency = curVal.toFixed(1) + " GHz"
+              if (root.cpuMaxGhz < curVal) root.cpuMaxGhz = curVal
+            }
+          } else if (line.indexOf("min ") === 0) {
+            var minVal = parseFloat(line.substr(4))
+            if (isFinite(minVal) && minVal > 0) root.cpuMinGhz = minVal
+          } else if (line.indexOf("max ") === 0) {
+            var maxVal = parseFloat(line.substr(4))
+            if (isFinite(maxVal) && maxVal > 0) root.cpuMaxGhz = maxVal
           } else if (line.indexOf("cpu ") === 0) {
             var parts = line.split(/\s+/)
             var total = 0
@@ -137,8 +163,9 @@ QtObject {
             if (root._cpuPrevTotal > 0 && total > root._cpuPrevTotal) {
               var diffTotal = total - root._cpuPrevTotal
               var diffIdle = idleAll - root._cpuPrevIdle
-              var usage = Math.round(((diffTotal - diffIdle) / diffTotal) * 100)
-              root.cpuUsage = Math.max(0, Math.min(100, usage)) + "%"
+              var frac = Math.max(0, Math.min(1, (diffTotal - diffIdle) / diffTotal))
+              root.cpuUsageRatio = frac
+              root.cpuUsage = Math.round(frac * 100) + "%"
             }
             root._cpuPrevTotal = total
             root._cpuPrevIdle = idleAll
@@ -158,21 +185,27 @@ QtObject {
 
   property string memoryText: "— GB"
   property string memoryTooltip: "Memory"
+  property real memoryUsedGb: 0.0
+  property real memoryTotalGb: 0.0
+  readonly property real memoryUsageRatio: memoryTotalGb > 0 ? Math.max(0, Math.min(1, memoryUsedGb / memoryTotalGb)) : 0
 
   property Process memProc: Process {
     command: [
       "awk",
-      "/MemTotal:/ {total=$2} /MemAvailable:/ {avail=$2} /SwapTotal:/ {stotal=$2} /SwapFree:/ {sfree=$2} END {used=(total-avail)/(1024*1024); tot=total/(1024*1024); sused=(stotal-sfree)/(1024*1024); stot=stotal/(1024*1024); printf \"%.1f GB|Used: %.1fG / %.1fG\\nSwap: %.1fG / %.1fG\\n\", used, used, tot, sused, stot}",
+      "/MemTotal:/ {total=$2} /MemAvailable:/ {avail=$2} /SwapTotal:/ {stotal=$2} /SwapFree:/ {sfree=$2} END {used=(total-avail)/(1024*1024); tot=total/(1024*1024); sused=(stotal-sfree)/(1024*1024); stot=stotal/(1024*1024); printf \"%.3f|%.3f|%.1f GB|Used: %.1fG / %.1fG\\nSwap: %.1fG / %.1fG\\n\", used, tot, used, used, tot, sused, stot}",
       "/proc/meminfo"
     ]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        var str = String(text || "").trim()
-        var pipeIdx = str.indexOf("|")
-        if (pipeIdx !== -1) {
-          root.memoryText = str.substring(0, pipeIdx).trim()
-          root.memoryTooltip = str.substring(pipeIdx + 1).trim()
+        var parts = String(text || "").trim().split("|")
+        if (parts.length >= 4) {
+          var used = parseFloat(parts[0])
+          var tot = parseFloat(parts[1])
+          if (isFinite(used) && used >= 0) root.memoryUsedGb = used
+          if (isFinite(tot) && tot > 0) root.memoryTotalGb = tot
+          root.memoryText = parts[2].trim()
+          root.memoryTooltip = parts.slice(3).join("|").trim()
         }
       }
     }

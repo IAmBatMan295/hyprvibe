@@ -764,7 +764,7 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(380))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight)
+    contentHeight: panel.fittedContentHeight(column.implicitHeight, panel.maxPanelContentHeight)
 
     // Catches all unhandled keys for keyboard navigation. AfterItem priority
     // lets the passphrase TextField (a child via focus chain) get its keys
@@ -861,7 +861,7 @@ Panel {
         Text {
           id: heroIcon
           textFormat: Text.PlainText
-          text: root.icon
+          text: GlitchBus.panelGlyph(root.icon)
           color: root.bar.foreground
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.display
@@ -911,7 +911,7 @@ Panel {
               text: ""
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.icon
-              color: root.scanning ? ThemeColor.muted : (refreshButton.hot ? ThemeColor.accent : root.bar.foreground)
+              color: root.scanning ? ThemeColor.muted : root.bar.foreground
               textFormat: Text.PlainText
               transformOrigin: Item.Center
 
@@ -988,7 +988,7 @@ Panel {
               return root.kind === "disconnected" ? "Disconnected" : "No connection"
             }
 
-            text: heroSsid.title
+            text: GlitchBus.panelText(heroSsid.title)
             color: root.bar.foreground
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.title
@@ -1000,7 +1000,7 @@ Panel {
             id: heroMeta
             textFormat: Text.PlainText
             width: parent.width
-            text: root.scanning ? "SCANNING..." : ""
+            text: GlitchBus.panelText(root.scanning ? "SCANNING..." : "")
             visible: text !== ""
             color: ThemeColor.muted
             font.family: root.bar.fontFamily
@@ -1161,13 +1161,16 @@ Panel {
         id: networkList
         visible: root.wifiStationAvailable
         width: parent.width
-        height: Math.min(contentHeight, Style.space(240))
+        height: Math.min(contentHeight, panel.maxListViewportHeight(panel.nonScrollChildrenHeight(column, networkList)))
         spacing: Style.space(4)
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         interactive: contentHeight > height
 
-        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+        ScrollBar.vertical: PanelScrollBar {
+          id: networkScroll
+          policy: networkList.contentHeight > networkList.height ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+        }
 
         model: root.displayedWifiNetworks
         currentIndex: root.selectedIndex
@@ -1180,7 +1183,7 @@ Panel {
           required property var modelData
           required property int index
           readonly property string sectionTitle: root.wifiSectionTitle(index)
-          width: ListView.view.width
+          width: ListView.view.width - (networkScroll.visible ? networkScroll.width + Style.space(6) : 0)
           height: delegateColumn.implicitHeight
 
           Column {
@@ -1310,6 +1313,7 @@ Panel {
 
     readonly property color statusColor: {
       if (isFailed) return root.bar.urgent
+      if (row.hasCursor) return ThemeColor.accent
       if (isBusy) return root.bar.foreground
       if (isConnected) return root.bar.foreground
       return Qt.darker(root.bar.foreground, 1.5)
@@ -1365,7 +1369,7 @@ Panel {
       Text {
         id: networkIcon
         textFormat: Text.PlainText
-        text: row.net ? root.wifiIconFor(row.net.signal) : ""
+        text: GlitchBus.panelGlyph(row.net ? root.wifiIconFor(row.net.signal) : "")
         color: row.statusColor
         font.family: root.bar.fontFamily
         font.pixelSize: Style.font.title
@@ -1384,7 +1388,7 @@ Panel {
           visible: row.requiresCredentials && !row.isKnown && !row.isConnected
           anchors.verticalCenter: parent.verticalCenter
           text: "󰌾"
-          color: Qt.darker(root.bar.foreground, 1.4)
+          color: row.hasCursor ? ThemeColor.accent : Qt.darker(root.bar.foreground, 1.4)
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.subtitle
         }
@@ -1411,7 +1415,7 @@ Panel {
           Text {
             id: forgetText
             anchors.centerIn: parent
-            text: "Forget"
+            text: GlitchBus.panelText("Forget")
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.caption
             font.bold: true
@@ -1442,20 +1446,20 @@ Panel {
           BorderSurface {
             anchors.fill: parent
             visible: disconnectBtn.hot
-            color: disconnectMouse.pressed ? Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.15) : "transparent"
+            color: disconnectMouse.pressed ? Qt.rgba(root.bar.urgent.r, root.bar.urgent.g, root.bar.urgent.b, 0.15) : "transparent"
             radius: Style.cornerRadius
-            borderSpec: Border.controlSpec("hover-cursor", root.bar.foreground, ThemeColor.accent)
+            borderSpec: Border.controlSpec("hover-cursor", root.bar.urgent, root.bar.urgent)
             Behavior on color { ColorAnimation { duration: 80 } }
           }
 
           Text {
             id: disconnectText
             anchors.centerIn: parent
-            text: "Disconnect"
+            text: GlitchBus.panelText("Disconnect")
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.caption
             font.bold: true
-            color: disconnectBtn.hot ? root.bar.foreground : Qt.darker(root.bar.foreground, 1.4)
+            color: disconnectBtn.hot ? root.bar.urgent : Qt.darker(root.bar.foreground, 1.4)
           }
 
           MouseArea {
@@ -1480,8 +1484,9 @@ Panel {
 
         Text {
           textFormat: Text.PlainText
-          text: row.net ? (row.net.ssid || "Hidden") : ""
-          color: root.bar.foreground
+          text: GlitchBus.panelText(row.net ? (row.net.ssid || "Hidden") : "")
+          color: row.hasCursor ? ThemeColor.accent : root.bar.foreground
+          Behavior on color { ColorAnimation { duration: 80 } }
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.body
           font.bold: row.isConnected
@@ -1495,7 +1500,7 @@ Panel {
           // so the second line only carries action status (Connecting…,
           // Connected, Failed, etc.). Collapses to zero height when empty
           // so rows without status keep a tight one-line look.
-          text: row.statusText
+          text: GlitchBus.panelText(row.statusText)
           visible: row.statusText !== ""
           color: row.statusColor
           font.family: root.bar.fontFamily
@@ -1599,7 +1604,7 @@ Panel {
           anchors.fill: parent
           horizontalAlignment: Text.AlignHCenter
           verticalAlignment: Text.AlignVCenter
-          text: row.isFailed ? (root.failureReason !== "" ? root.failureReason : "Connection failed") : "Connecting..."
+          text: GlitchBus.panelText(row.isFailed ? (root.failureReason !== "" ? root.failureReason : "Connection failed") : "Connecting...")
           color: row.isFailed ? root.bar.urgent : root.bar.foreground
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.bodySmall

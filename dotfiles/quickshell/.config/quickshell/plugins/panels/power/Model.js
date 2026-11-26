@@ -46,7 +46,7 @@ function batteryIcon(device, onBattery, states) {
       return "󰂄"
     }
     // Plugged in but not charging (conservation / threshold / fully charged)
-    return ""
+    return "󰚥"
   }
 
   // Discharging (on battery) - vertical battery icons

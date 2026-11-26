@@ -563,12 +563,6 @@ Panel {
   PwObjectTracker { objects: root.candidateSources }
   PwObjectTracker { objects: root.audioStreams }
 
-  PwNodePeakMonitor {
-    id: inputPeakMonitor
-    node: root.source
-    enabled: root.opened && !!root.source
-  }
-
   Process {
     id: sinkAvailabilityProc
     command: ["hyprvibe-audio-sink-availability"]
@@ -641,7 +635,7 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(380))
-    contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(560))
+    contentHeight: panel.fittedContentHeight(outerColumn.implicitHeight, panel.maxPanelContentHeight)
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -671,104 +665,121 @@ Panel {
         }
       }
 
-      ScrollView {
-        id: scrollArea
+      Column {
+        id: outerColumn
         anchors.fill: parent
-        clip: true
-        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-        ScrollBar.vertical.policy: panelColumn.implicitHeight > height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
-        Binding {
-          target: scrollArea.contentItem
-          property: "interactive"
-          value: panelColumn.implicitHeight > scrollArea.height
-        }
+        spacing: Style.space(14)
 
-        Column {
-          id: panelColumn
-          width: scrollArea.availableWidth
-          spacing: Style.space(14)
+        // ---------- Pinned Hero: speaker icon · title/status ----------
+        Item {
+          id: heroItem
+          width: parent.width
+          implicitHeight: Math.max(heroIcon.implicitHeight, heroLabels.implicitHeight, powerSwitch.implicitHeight)
 
-          // ---------- Hero: speaker icon · title/status ----------
-          Item {
-            id: heroItem
-            width: parent.width
-            implicitHeight: Math.max(heroIcon.implicitHeight, heroLabels.implicitHeight, powerSwitch.implicitHeight)
+          // Status only — the switch owns muting, mouse and keyboard alike.
+          Text {
+            id: heroIcon
+            textFormat: Text.PlainText
+            text: GlitchBus.panelGlyph(root.outputIcon())
+            color: root.bar.foreground
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.display
+            opacity: root.outputMuted ? 0.5 : 1.0
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+          }
 
-            // Status only — the switch owns muting, mouse and keyboard alike.
+          // Compact on/off switch on the trailing edge of the hero, and the
+          // header's only cursor target. Checked means something is still
+          // audible, so muting everything reads as switching audio off.
+          ToggleSwitch {
+            id: powerSwitch
+            checked: root.anyAudible
+            hasCursor: root.headerHasCursor
+            foreground: root.bar.foreground
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            onHovered: function(on) { if (on) root.setHeaderCursor() }
+            onToggled: root.toggleAllMuted()
+
+            PanelToolTip {
+              visible: powerSwitch.containsMouse
+              text: root.toggleHint
+              fontFamily: root.bar.fontFamily
+            }
+          }
+
+          Column {
+            id: heroLabels
+            anchors.left: heroIcon.right
+            anchors.leftMargin: Style.space(14)
+            anchors.right: parent.right
+            anchors.rightMargin: powerSwitch.width + Style.space(12)
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(2)
+
             Text {
-              id: heroIcon
-              textFormat: Text.PlainText
-              text: root.outputIcon()
+              text: GlitchBus.panelText("Audio")
               color: root.bar.foreground
               font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.display
-              opacity: root.outputMuted ? 0.5 : 1.0
-              anchors.left: parent.left
-              anchors.verticalCenter: parent.verticalCenter
+              font.pixelSize: Style.font.title
+              font.bold: true
+              elide: Text.ElideRight
+              width: parent.width
             }
 
-            // Compact on/off switch on the trailing edge of the hero, and the
-            // header's only cursor target. Checked means something is still
-            // audible, so muting everything reads as switching audio off.
-            ToggleSwitch {
-              id: powerSwitch
-              checked: root.anyAudible
-              hasCursor: root.headerHasCursor
-              foreground: root.bar.foreground
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              onHovered: function(on) { if (on) root.setHeaderCursor() }
-              onToggled: root.toggleAllMuted()
-
-              PanelToolTip {
-                visible: powerSwitch.containsMouse
-                text: root.toggleHint
-                fontFamily: root.bar.fontFamily
-              }
-            }
-
-            Column {
-              id: heroLabels
-              anchors.left: heroIcon.right
-              anchors.leftMargin: Style.space(14)
-              anchors.right: parent.right
-              anchors.rightMargin: powerSwitch.width + Style.space(12)
-              anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(2)
-
-              Text {
-                text: "Audio"
-                color: root.bar.foreground
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.title
-                font.bold: true
-                elide: Text.ElideRight
-                width: parent.width
-              }
-
-              Text {
-                id: heroLabel
-                textFormat: Text.PlainText
-                text: root.outputVolumeName(
-                  outputSlider.dragging ? outputSlider.liveValue : root.outputVolume,
-                  root.outputMuted
-                ).toUpperCase()
-                visible: text !== ""
-                color: Qt.darker(root.bar.foreground, 1.4)
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.caption
-                font.bold: true
-                font.letterSpacing: 1.2
-                elide: Text.ElideRight
-                width: parent.width
-              }
+            Text {
+              id: heroLabel
+              textFormat: Text.PlainText
+              text: GlitchBus.panelText(root.outputVolumeName(
+                outputSlider.dragging ? outputSlider.liveValue : root.outputVolume,
+                root.outputMuted
+              ).toUpperCase())
+              visible: text !== ""
+              color: Qt.darker(root.bar.foreground, 1.4)
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+              font.letterSpacing: 1.2
+              elide: Text.ElideRight
+              width: parent.width
             }
           }
+        }
 
-          // ---- Output devices ----
-          PanelSeparator {
-            foreground: root.bar.foreground
+        // ---- Output devices ----
+        PanelSeparator {
+          id: topSeparator
+          foreground: root.bar.foreground
+        }
+
+        ScrollView {
+          id: scrollArea
+          readonly property real viewportHeight: Math.min(
+            panelColumn.implicitHeight,
+            panel.maxListViewportHeight(panel.nonScrollChildrenHeight(outerColumn, scrollArea))
+          )
+          width: parent.width
+          implicitHeight: viewportHeight
+          height: viewportHeight
+          padding: 0
+          clip: true
+          ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+          ScrollBar.vertical: PanelScrollBar {
+            id: audioScroll
+            parent: scrollArea
+            policy: panelColumn.implicitHeight > scrollArea.height ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
           }
+          Binding {
+            target: scrollArea.contentItem
+            property: "interactive"
+            value: panelColumn.implicitHeight > scrollArea.height
+          }
+
+          Column {
+            id: panelColumn
+            width: scrollArea.width - (audioScroll.visible ? audioScroll.width + Style.space(6) : 0)
+            spacing: Style.space(14)
 
           Column {
             width: parent.width
@@ -790,7 +801,7 @@ Panel {
               Text {
                 id: outputPercent
                 textFormat: Text.PlainText
-                text: Math.round((outputSlider.dragging ? outputSlider.liveValue : root.outputVolume) * 100) + "%"
+                text: GlitchBus.panelText(Math.round((outputSlider.dragging ? outputSlider.liveValue : root.outputVolume) * 100) + "%")
                 color: Qt.darker(root.bar.foreground, 1.4)
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.caption
@@ -877,7 +888,7 @@ Panel {
               Text {
                 id: microphonePercent
                 textFormat: Text.PlainText
-                text: Math.round((inputSlider.dragging ? inputSlider.liveValue : root.inputVolume) * 100) + "%"
+                text: GlitchBus.panelText(Math.round((inputSlider.dragging ? inputSlider.liveValue : root.inputVolume) * 100) + "%")
                 color: Qt.darker(root.bar.foreground, 1.4)
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.caption
@@ -893,47 +904,27 @@ Panel {
               id: inputSliderRow
               visible: !!root.source
               width: parent.width
-              height: inputControls.implicitHeight + Style.spacing.controlGap
+              height: inputSlider.implicitHeight + Style.spacing.controlGap
               hasCursor: root.cursorActive && root.focusSection === "input" && root.selectedIndex === -1
               onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(inputSliderRow)
               foreground: root.bar.foreground
               outline: true
 
-              Column {
-                id: inputControls
+              PanelSlider {
+                id: inputSlider
+                bar: root.bar
                 anchors.fill: parent
                 anchors.leftMargin: Style.space(6)
                 anchors.rightMargin: Style.space(6)
-                spacing: Style.space(5)
+                minimum: 0
+                maximum: 1
+                step: 0.05
+                value: root.inputVolume
+                opacity: root.inputMuted ? 0.5 : 1.0
+                enabled: !!root.source
 
-                PanelSlider {
-                  id: inputSlider
-                  bar: root.bar
-                  width: parent.width
-                  minimum: 0
-                  maximum: 1
-                  step: 0.05
-                  value: root.inputVolume
-                  opacity: root.inputMuted ? 0.5 : 1.0
-                  enabled: !!root.source
-
-                  onMoved: function(v) { root.setInputVolume(v) }
-                  onRightClicked: root.toggleInputMute()
-                }
-
-                Rectangle {
-                  width: parent.width
-                  height: Math.max(Style.space(5), Style.spacing.xs)
-                  color: Util.alpha(root.bar.foreground, 0.18)
-                  opacity: root.inputMuted ? 0.35 : 1.0
-
-                  Rectangle {
-                    height: parent.height
-                    width: parent.width * Math.max(0, Math.min(1, inputPeakMonitor.peak))
-                    color: root.bar.foreground
-                    Behavior on width { NumberAnimation { duration: 70 } }
-                  }
-                }
+                onMoved: function(v) { root.setInputVolume(v) }
+                onRightClicked: root.toggleInputMute()
               }
 
               HoverHandler {
@@ -991,6 +982,7 @@ Panel {
       }
     }
   }
+}
 
   // ---- Reusable inline components ----
 
@@ -1021,8 +1013,9 @@ Panel {
 
       Text {
         textFormat: Text.PlainText
-        text: root.sinkGlyph(sinkRow.node)
-        color: root.bar.foreground
+        text: GlitchBus.panelGlyph(root.sinkGlyph(sinkRow.node))
+        color: sinkRow.hasCursor ? ThemeColor.accent : root.bar.foreground
+        Behavior on color { ColorAnimation { duration: 80 } }
         font.family: root.bar.fontFamily
         font.pixelSize: Style.font.title
         width: Style.space(22)
@@ -1032,8 +1025,9 @@ Panel {
 
       Text {
         textFormat: Text.PlainText
-        text: root.nodeLabel(sinkRow.node)
-        color: root.bar.foreground
+        text: GlitchBus.panelText(root.nodeLabel(sinkRow.node))
+        color: sinkRow.hasCursor ? ThemeColor.accent : root.bar.foreground
+        Behavior on color { ColorAnimation { duration: 80 } }
         font.family: root.bar.fontFamily
         font.pixelSize: Style.font.body
         font.bold: sinkRow.isActive
@@ -1082,8 +1076,9 @@ Panel {
 
       Text {
         textFormat: Text.PlainText
-        text: root.sourceGlyph(sourceRow.node)
-        color: root.bar.foreground
+        text: GlitchBus.panelGlyph(root.sourceGlyph(sourceRow.node))
+        color: sourceRow.hasCursor ? ThemeColor.accent : root.bar.foreground
+        Behavior on color { ColorAnimation { duration: 80 } }
         font.family: root.bar.fontFamily
         font.pixelSize: Style.font.title
         width: Style.space(22)
@@ -1093,8 +1088,9 @@ Panel {
 
       Text {
         textFormat: Text.PlainText
-        text: root.nodeLabel(sourceRow.node)
-        color: root.bar.foreground
+        text: GlitchBus.panelText(root.nodeLabel(sourceRow.node))
+        color: sourceRow.hasCursor ? ThemeColor.accent : root.bar.foreground
+        Behavior on color { ColorAnimation { duration: 80 } }
         font.family: root.bar.fontFamily
         font.pixelSize: Style.font.body
         font.bold: sourceRow.isActive
@@ -1154,8 +1150,9 @@ Panel {
         Text {
           id: streamMuteIcon
           textFormat: Text.PlainText
-          text: streamRow.streamMuted ? "󰝟" : "󰕾"
-          color: root.bar.foreground
+          text: GlitchBus.panelGlyph(streamRow.streamMuted ? "󰝟" : "󰕾")
+          color: streamRow.hasCursor ? ThemeColor.accent : root.bar.foreground
+          Behavior on color { ColorAnimation { duration: 80 } }
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.title
           width: Style.space(22)
@@ -1175,8 +1172,9 @@ Panel {
 
         Text {
           textFormat: Text.PlainText
-          text: root.streamLabel(streamRow.node)
-          color: root.bar.foreground
+          text: GlitchBus.panelText(root.streamLabel(streamRow.node))
+          color: streamRow.hasCursor ? ThemeColor.accent : root.bar.foreground
+          Behavior on color { ColorAnimation { duration: 80 } }
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.body
           font.bold: streamRow.isActive
@@ -1188,7 +1186,7 @@ Panel {
         Text {
           id: streamPct
           textFormat: Text.PlainText
-          text: Math.round(streamRow.streamVolume * 100) + "%"
+          text: GlitchBus.panelText(Math.round(streamRow.streamVolume * 100) + "%")
           color: Qt.darker(root.bar.foreground, 1.5)
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.caption

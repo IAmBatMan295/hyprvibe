@@ -27,10 +27,20 @@ Item {
   property bool useActiveColor: true
   property bool maintainIndicatorReveal: false
   property bool labelVisible: true
+  property Component leadingComponent: null
+  property real leadingSpacing: Style.space(6)
+  property Component trailingComponent: null
+  property real trailingSpacing: Style.space(5)
   property bool hasVisualContent: text !== ""
   property var revealHost: bar
   property string tooltipText: ""
   property var registeredBar: null
+
+  readonly property color effectiveColor: {
+    if (root.active && root.useActiveColor) return root.activeColor
+    if (root.hovered && root.highlightOnHover) return root.hoverColor
+    return root.foreground
+  }
 
   signal pressed(int button)
   signal wheelMoved(int delta)
@@ -74,40 +84,72 @@ Item {
   // Painted content width inside this button; subclasses like BarIconButton
   // bind their optical glyph/canvas width so barEdgeInset measures true inner
   // padding from widget edge to painted content for Bar.qml edge alignment.
-  property real contentVisualWidth: labelVisible ? label.implicitWidth : 0
+  property real contentVisualWidth: labelVisible ? contentRow.implicitWidth : 0
   readonly property real barEdgeInset: Math.max(0, (width - contentVisualWidth) / 2)
 
   visible: hasVisualContent || keepSpace
   opacity: !hasVisualContent || concealed ? 0 : (dimmed ? 0.45 : 1)
-  implicitWidth: fixedWidth > 0 ? fixedWidth : (vertical ? barSize : Math.max(12, label.implicitWidth + scaledHorizontalMargin * 2))
-  implicitHeight: fixedHeight > 0 ? fixedHeight : (vertical ? Math.max(12, label.implicitHeight + scaledVerticalPadding * 2) : barSize)
+  implicitWidth: fixedWidth > 0 ? fixedWidth : (vertical ? barSize : Math.max(12, contentRow.implicitWidth + scaledHorizontalMargin * 2))
+  implicitHeight: fixedHeight > 0 ? fixedHeight : (vertical ? Math.max(12, contentRow.implicitHeight + scaledVerticalPadding * 2) : barSize)
 
   Behavior on opacity {
     NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
   }
 
-  Text {
-    id: label
-    textFormat: Text.PlainText
-    visible: root.labelVisible
+  Row {
+    id: contentRow
     anchors.centerIn: parent
-    text: root.text
-    color: {
-      if (root.active && root.useActiveColor) return root.activeColor
-      if (root.hovered && root.highlightOnHover) return root.hoverColor
-      return root.foreground
-    }
-    font.family: root.fontFamily
-    font.pixelSize: root.fontSize
-    font.bold: root.fontBold
-    renderType: Text.NativeRendering
-    rotation: root.textRotation
-    horizontalAlignment: Text.AlignHCenter
-    verticalAlignment: Text.AlignVCenter
+    spacing: 0
 
-    Behavior on color {
-      enabled: !root.bar || root.bar.foregroundAnimationEnabled
-      ColorAnimation { duration: 160 }
+    Loader {
+      id: leadingLoader
+      anchors.verticalCenter: parent.verticalCenter
+      active: root.labelVisible && root.leadingComponent !== null
+      visible: active && status === Loader.Ready
+      sourceComponent: root.leadingComponent
+    }
+
+    Item {
+      width: root.leadingSpacing
+      height: 1
+      visible: leadingLoader.visible
+    }
+
+    Text {
+      id: label
+      anchors.verticalCenter: parent.verticalCenter
+      textFormat: Text.PlainText
+      visible: root.labelVisible
+      text: (root.bar && root.bar.dataEffect && root.bar.dataEffect.active)
+        ? root.bar.dataEffect.scrambleText(root.text)
+        : root.text
+      color: root.effectiveColor
+      font.family: root.fontFamily
+      font.pixelSize: root.fontSize
+      font.bold: root.fontBold
+      renderType: Text.NativeRendering
+      rotation: root.textRotation
+      horizontalAlignment: Text.AlignHCenter
+      verticalAlignment: Text.AlignVCenter
+
+      Behavior on color {
+        enabled: !root.bar || root.bar.foregroundAnimationEnabled
+        ColorAnimation { duration: 160 }
+      }
+    }
+
+    Item {
+      width: root.trailingSpacing
+      height: 1
+      visible: trailingLoader.visible
+    }
+
+    Loader {
+      id: trailingLoader
+      anchors.verticalCenter: parent.verticalCenter
+      active: root.labelVisible && root.trailingComponent !== null
+      visible: active && status === Loader.Ready
+      sourceComponent: root.trailingComponent
     }
   }
 

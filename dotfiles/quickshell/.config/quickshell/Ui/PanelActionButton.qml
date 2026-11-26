@@ -69,7 +69,7 @@ BorderSurface {
   Text {
     textFormat: Text.PlainText
     anchors.centerIn: parent
-    text: root.iconText
+    text: GlitchBus.panelGlyph(root.iconText)
     color: root.enabled
       ? (root._hot ? root.hoverColor : root.foreground)
       : Qt.darker(root.foreground, 2.0)

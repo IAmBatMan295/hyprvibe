@@ -744,7 +744,7 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(380))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight)
+    contentHeight: panel.fittedContentHeight(column.implicitHeight, panel.maxPanelContentHeight)
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -779,7 +779,7 @@ Panel {
             textFormat: Text.PlainText
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
-            text: root.icon
+            text: GlitchBus.panelGlyph(root.icon)
             color: root.bar.foreground
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.display
@@ -825,7 +825,7 @@ Panel {
                 text: ""
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.icon
-                color: root.scanning ? ThemeColor.muted : (refreshButton.hot ? ThemeColor.accent : root.bar.foreground)
+                color: root.scanning ? ThemeColor.muted : root.bar.foreground
                 textFormat: Text.PlainText
                 transformOrigin: Item.Center
 
@@ -890,7 +890,7 @@ Panel {
             spacing: Style.space(2)
 
             Text {
-              text: "Bluetooth"
+              text: GlitchBus.panelText("Bluetooth")
               color: root.bar.foreground
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.title
@@ -902,7 +902,7 @@ Panel {
             Text {
               id: heroStatus
               textFormat: Text.PlainText
-              text: root.heroStatusText.toUpperCase()
+              text: GlitchBus.panelText(root.heroStatusText.toUpperCase())
               visible: text !== ""
               color: root.scanning ? ThemeColor.muted : Qt.darker(root.bar.foreground, 1.4)
               font.family: root.bar.fontFamily
@@ -960,13 +960,16 @@ Panel {
           id: deviceListView
           visible: root.scrollRows.length > 0
           width: parent.width
-          height: Math.min(contentHeight, Style.space(400))
+          height: Math.min(contentHeight, panel.maxListViewportHeight(panel.nonScrollChildrenHeight(column, deviceListView)))
           spacing: Style.space(8)
           clip: true
           boundsBehavior: Flickable.StopAtBounds
           interactive: contentHeight > height
 
-          ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+          ScrollBar.vertical: PanelScrollBar {
+            id: deviceScroll
+            policy: deviceListView.contentHeight > deviceListView.height ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+          }
 
           model: root.scrollRows
           currentIndex: root.scrollRowIndex
@@ -985,7 +988,7 @@ Panel {
             required property int index
             readonly property string sectionTitle: root.scrollSectionTitle(index)
 
-            width: ListView.view.width
+            width: ListView.view.width - (deviceScroll.visible ? deviceScroll.width + Style.space(6) : 0)
             height: delegateColumn.implicitHeight
 
             Column {
@@ -1021,9 +1024,9 @@ Panel {
         Text {
           textFormat: Text.PlainText
           visible: !root.scanning && root.connectedDevices.length === 0 && root.scrollRows.length === 0
-          text: !root.adapter ? "No Bluetooth adapter"
+          text: GlitchBus.panelText(!root.adapter ? "No Bluetooth adapter"
               : !root.adapter.enabled ? "Turn Bluetooth on to scan"
-              : "Scanning for devices…"
+              : "Scanning for devices…")
           color: Qt.darker(root.bar.foreground, 1.5)
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.bodySmall
@@ -1078,6 +1081,7 @@ Panel {
     }
 
     readonly property color statusColor: {
+      if (row.hasCursor) return ThemeColor.accent
       if (isConnected) return root.bar.foreground
       if (action !== "" || devState === 3 || dev.pairing === true || row.isPromptOpen) return root.bar.foreground
       return Qt.darker(root.bar.foreground, 1.5)
@@ -1130,7 +1134,7 @@ Panel {
       Text {
         id: deviceIcon
         textFormat: Text.PlainText
-        text: row.isConnected ? "󰂱" : "󰂯"
+        text: GlitchBus.panelGlyph(row.isConnected ? "󰂱" : "󰂯")
         color: row.statusColor
         font.family: root.bar.fontFamily
         font.pixelSize: Style.font.heading
@@ -1149,8 +1153,9 @@ Panel {
 
         Text {
           textFormat: Text.PlainText
-          text: root.deviceLabel(row.dev) || "Device"
-          color: root.bar.foreground
+          text: GlitchBus.panelText(root.deviceLabel(row.dev) || "Device")
+          color: row.hasCursor ? ThemeColor.accent : root.bar.foreground
+          Behavior on color { ColorAnimation { duration: 80 } }
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.body
           font.bold: row.isConnected
@@ -1160,7 +1165,7 @@ Panel {
         Text {
           textFormat: Text.PlainText
           visible: row.statusText !== ""
-          text: row.statusText
+          text: GlitchBus.panelText(row.statusText)
           color: row.statusColor
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.caption
@@ -1197,7 +1202,7 @@ Panel {
           Text {
             id: unpairText
             anchors.centerIn: parent
-            text: "Unpair"
+            text: GlitchBus.panelText("Unpair")
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.caption
             font.bold: true
@@ -1237,20 +1242,20 @@ Panel {
           BorderSurface {
             anchors.fill: parent
             visible: disconnectBtn.hot
-            color: disconnectMouse.pressed ? Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.15) : "transparent"
+            color: disconnectMouse.pressed ? Qt.rgba(root.bar.urgent.r, root.bar.urgent.g, root.bar.urgent.b, 0.15) : "transparent"
             radius: Style.cornerRadius
-            borderSpec: Border.controlSpec("hover-cursor", root.bar.foreground, ThemeColor.accent)
+            borderSpec: Border.controlSpec("hover-cursor", root.bar.urgent, root.bar.urgent)
             Behavior on color { ColorAnimation { duration: 80 } }
           }
 
           Text {
             id: disconnectText
             anchors.centerIn: parent
-            text: "Disconnect"
+            text: GlitchBus.panelText("Disconnect")
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.caption
             font.bold: true
-            color: disconnectBtn.hot ? root.bar.foreground : Qt.darker(root.bar.foreground, 1.4)
+            color: disconnectBtn.hot ? root.bar.urgent : Qt.darker(root.bar.foreground, 1.4)
           }
 
           MouseArea {

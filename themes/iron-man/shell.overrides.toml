@@ -1,0 +1,20 @@
+# Theme-specific shell.toml overrides (appended after shell.toml.tpl render).
+# Keeps shared colors.toml derivation intact while enabling theme effects.
+
+[effects]
+enabled = true
+animations = true
+glitch-interval-ms = 10000
+glitch-burst-ms = 420
+crt-scanline-alpha = 0.24
+bar-glitch = "combo"
+bar-crt = "fulltime"
+popups-glitch = "data"
+popups-crt = "off"
+tooltip-glitch = "none"
+tooltip-crt = "off"
+bar-separator-style = "cyber-slash"
+bar-cpu-style = "arc-reactor"
+bar-ram-style = "silicon-die"
+bar-clock-style = "chronos-pip"
+bar-blip-interval-ms = 2800

@@ -17,7 +17,7 @@ Panel {
   property var systemInfo: ({})
   readonly property bool showPercentage: true
   // The button paints a text block with icon and percentage, so the open-panel mark takes the painted width
-  readonly property real openPanelIndicatorWidth: !button.vertical ? button.labelWidth : 0
+  readonly property real openPanelIndicatorWidth: !button.vertical ? button.contentVisualWidth : 0
   readonly property bool batteryPresent: {
     var device = UPower.displayDevice
     return !!(device && device.isPresent)
@@ -141,15 +141,34 @@ Panel {
 
   Timer { interval: 5000; running: root.opened; repeat: true; onTriggered: root.refresh() }
 
+  Component {
+    id: batteryGlyphComponent
+
+    OpticalGlyph {
+      id: batteryGlyph
+      width: Math.ceil(batteryGlyph.tightWidth)
+      height: Style.bar.iconCanvas
+      text: root.batteryIcon()
+      displayText: (root.bar && root.bar.dataEffect && root.bar.dataEffect.active)
+        ? root.bar.dataEffect.scrambleGlyph(text)
+        : text
+      fontFamily: button.fontFamily
+      fontSize: Style.bar.iconFont
+      color: button.effectiveColor
+    }
+  }
+
   WidgetButton {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: Math.round(root.batteryFraction * 100) + "% " + root.batteryIcon()
+    text: Math.round(root.batteryFraction * 100) + "%"
     fontSize: Style.font.body
-    horizontalMargin: 4
+    horizontalMargin: 6
     verticalPadding: 2
     fixedHeight: root.bar ? root.bar.barSize : Style.bar.sizeHorizontal
+    trailingSpacing: Style.space(4)
+    trailingComponent: batteryGlyphComponent
     tooltipText: {
       var dev = UPower.displayDevice
       var pct = Math.round(root.batteryFraction * 100) + "%"
@@ -195,7 +214,7 @@ Panel {
           Text {
             id: heroIcon
             textFormat: Text.PlainText
-            text: root.batteryIcon()
+            text: GlitchBus.panelGlyph(root.batteryIcon())
             color: root.bar.foreground
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.display
@@ -215,7 +234,7 @@ Panel {
             spacing: Style.space(2)
 
             Text {
-              text: "Battery"
+              text: GlitchBus.panelText("Battery")
               color: root.bar.foreground
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.title
@@ -227,7 +246,7 @@ Panel {
             Text {
               id: heroStatus
               textFormat: Text.PlainText
-              text: root.heroStatusText.toUpperCase()
+              text: GlitchBus.panelText(root.heroStatusText.toUpperCase())
               color: Qt.darker(root.bar.foreground, 1.4)
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.caption
@@ -241,7 +260,7 @@ Panel {
           Text {
             id: heroPercent
             textFormat: Text.PlainText
-            text: root.batteryInfo.percentage || "—"
+            text: GlitchBus.panelText(root.batteryInfo.percentage || "—")
             color: root.bar.foreground
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.displayLarge
@@ -332,13 +351,13 @@ Panel {
 
     InfoLabel {
       id: lbl
-      text: label
+      text: GlitchBus.panelText(label)
       anchors.left: parent.left
       anchors.verticalCenter: parent.verticalCenter
     }
     InfoValue {
       id: val
-      text: value
+      text: GlitchBus.panelText(value)
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
     }

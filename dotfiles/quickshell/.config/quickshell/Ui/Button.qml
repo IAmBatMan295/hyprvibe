@@ -107,18 +107,15 @@ BorderSurface {
     Border.left(_selectedBorderSpec),
     bordered ? Border.left(_normalBorderSpec) : 0)
   readonly property real _reservedContentLeftInset: _reservedBorderLeft + leftPadding
-  readonly property var _borderSpec: (root.active || root.selected)
-    ? Border.flat(root.accent, 2)
-    : (_showFocusRing || hot
-      ? Border.flat(ThemeColor.muted, 1)
-      : (bordered ? Border.flat(Qt.darker(ThemeColor.muted, 1.4), 1) : Border.none()))
+  readonly property var _borderSpec: (_showFocusRing || hot)
+    ? Border.flat(ThemeColor.muted, 1)
+    : (bordered ? Border.flat(Qt.darker(ThemeColor.muted, 1.4), 1) : Border.none())
 
   color: mouseArea.pressed
     ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.15)
     : "transparent"
 
-  // Border follows state precedence: active/selected gets 2px accent border;
-  // hover/focus gets 1px muted border; idle bordered gets 1px subtle border.
+  // hover/focus gets 1px muted border; active/selected/hover shifts text/icon to accent.
   borderSpec: _borderSpec
 
   Behavior on color { ColorAnimation { duration: 80 } }
@@ -157,8 +154,11 @@ BorderSurface {
     Text {
       textFormat: Text.PlainText
       visible: root.iconText !== ""
-      text: root.iconText
-      color: (root.selected || root.active) ? root.foreground : (root.hot ? root.foreground : Qt.darker(root.foreground, 1.3))
+      text: GlitchBus.panelGlyph(root.iconText)
+      color: (root.hot || root._showFocusRing)
+        ? root.accent
+        : ((root.selected || root.active) ? root.foreground : Qt.darker(root.foreground, 1.3))
+      Behavior on color { ColorAnimation { duration: 80 } }
       font.family: root.fontFamily
       font.pixelSize: root.iconSize
       rotation: root.iconSpinning ? 0 : root.iconRotation
@@ -177,8 +177,11 @@ BorderSurface {
     Text {
       textFormat: Text.PlainText
       visible: root.text !== ""
-      text: root.text
-      color: (root.selected || root.active) ? root.foreground : (root.hot ? root.foreground : Qt.darker(root.foreground, 1.3))
+      text: GlitchBus.panelText(root.text)
+      color: (root.hot || root._showFocusRing)
+        ? root.accent
+        : ((root.selected || root.active) ? root.foreground : Qt.darker(root.foreground, 1.3))
+      Behavior on color { ColorAnimation { duration: 80 } }
       font.family: root.fontFamily
       font.pixelSize: root.fontSize
       font.bold: root.selected || root.active

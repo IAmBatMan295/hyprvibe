@@ -9,9 +9,9 @@ active           = "{{ red }}"
 scale-with-font  = true
 size-horizontal  = 26
 size-vertical    = 28
-icon-slot        = 26
-icon-canvas      = 20
-icon-font        = 15
+icon-slot        = 24
+icon-canvas      = 18
+icon-font        = 13
 
 [hyprland]
 active-border            = "{{ accent }}"

@@ -26,6 +26,12 @@ Item {
   // Injected by the host shell. Used for shell-wide actions such as opening
   // settings and persisting inline widget state.
   property var shell: null
+  // Shared bar-wide Data / Typography glitch controller (Effect 4), driven
+  // by BarPanel's ComboGlitchEffect when enabled via shell.toml [effects].
+  DataGlitchEffect {
+    id: barDataGlitch
+  }
+  readonly property alias dataEffect: barDataGlitch
   // Manifest for the active bar option. Present for custom bars and useful for
   // diagnostics; the built-in bar does not otherwise need it.
   property var manifest: null
@@ -39,6 +45,11 @@ Item {
   // killing the entire shell. Hidden panels stay mapped but park off-screen
   // without an exclusion zone; updated by the FileView watcher further down.
   property bool barHidden: false
+  Binding {
+    target: GlitchBus
+    property: "barHidden"
+    value: root.barHidden
+  }
   property string home: Quickshell.env("HOME")
   property string stateHome: home + "/.local/state"
   property string hyprvibeConfigDir: home + "/.config/quickshell"
@@ -1270,6 +1281,13 @@ Item {
     // textures — which measures ~150ms against ~20ms to tear down. Parking
     // keeps the surface alive, so showing is only a margin change.
     readonly property bool effectivelyHidden: root.barHidden || !root.barRevealed
+    readonly property var _hyprMonitor: barWindow.screen ? Hyprland.monitorFor(barWindow.screen) : null
+    readonly property bool screenHasFullscreen: {
+      var ws = _hyprMonitor ? _hyprMonitor.activeWorkspace : null
+      if (ws) return !!(ws.hasFullscreen || ws.hasfullscreen)
+      return root.hasFullscreen
+    }
+    readonly property bool effectsSuspended: barWindow.effectivelyHidden || barWindow.screenHasFullscreen
 
     visible: !remapGuard.remapping
     exclusionMode: effectivelyHidden ? ExclusionMode.Ignore : ExclusionMode.Auto
@@ -1313,23 +1331,32 @@ Item {
     WlrLayershell.namespace: "hyprvibe-bar"
     WlrLayershell.layer: WlrLayer.Top
 
-    Loader {
+    ComboGlitchEffect {
+      id: barEffects
       anchors.fill: parent
-      sourceComponent: root.vertical ? verticalBar : horizontalBar
+      componentId: "bar"
+      sharedDataEffect: root.dataEffect
+      useSyncedClock: true
+      suspended: barWindow.effectsSuspended
 
-      // A child of the loader, not a sibling of the sections: an ancestor stays
-      // hovered while the pointer is over a widget, where a sibling would lose
-      // hover to the section the pointer entered.
-      HoverHandler {
-        onHoveredChanged: {
-          root.setBarHovered(hovered)
-          if (hovered) {
-            root.onBarEntered()
-          } else {
-            root.onBarLeft()
+      Loader {
+        anchors.fill: parent
+        sourceComponent: root.vertical ? verticalBar : horizontalBar
+
+        // A child of the loader, not a sibling of the sections: an ancestor stays
+        // hovered while the pointer is over a widget, where a sibling would lose
+        // hover to the section the pointer entered.
+        HoverHandler {
+          onHoveredChanged: {
+            root.setBarHovered(hovered)
+            if (hovered) {
+              root.onBarEntered()
+            } else {
+              root.onBarLeft()
+            }
           }
+          Component.onDestruction: if (hovered) root.setBarHovered(false)
         }
-        Component.onDestruction: if (hovered) root.setBarHovered(false)
       }
     }
 
@@ -1413,7 +1440,7 @@ Item {
           // horizontal padding intact, and shift the bar's inner region margin
           // by (Style.windowInnerInset - outermost widget's barEdgeInset) so
           // the left wrap/content edge aligns with Hyprland's inner window border (gaps_out + border_size).
-          anchors.leftMargin: Math.round(Style.windowInnerInset - leftModules.firstVisibleEdgeInset)
+          anchors.leftMargin: Math.round(Style.windowInnerInset + 1 - leftModules.firstVisibleEdgeInset)
           anchors.verticalCenter: parent.verticalCenter
         }
 
@@ -1422,7 +1449,7 @@ Item {
           anchors.right: parent.right
           // Symmetric dynamic compensation on the right so the rightmost icon's
           // visual edge aligns with Hyprland's right inner window border (gaps_out + border_size).
-          anchors.rightMargin: Math.round(Style.windowInnerInset - rightModules.lastVisibleEdgeInset)
+          anchors.rightMargin: Math.round(Style.windowInnerInset + 1 - rightModules.lastVisibleEdgeInset)
           anchors.verticalCenter: parent.verticalCenter
         }
       }

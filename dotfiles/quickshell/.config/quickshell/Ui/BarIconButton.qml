@@ -34,6 +34,9 @@ WidgetButton {
       anchors.fill: parent
       visible: root.iconComponent === null
       text: root.text
+      displayText: (root.bar && root.bar.dataEffect && root.bar.dataEffect.active)
+        ? root.bar.dataEffect.scrambleGlyph(root.text)
+        : root.text
       fontFamily: root.fontFamily
       fontSize: root.fontSize
       color: {

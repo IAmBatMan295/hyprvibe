@@ -1,11 +1,18 @@
 module qs.Ui
 
+ArcReactorGauge 1.0 ArcReactorGauge.qml
 BarIconButton 1.0 BarIconButton.qml
 BarWidget 1.0 BarWidget.qml
 BorderOverlay 1.0 BorderOverlay.qml
 BorderSurface 1.0 BorderSurface.qml
 Button 1.0 Button.qml
+ChronosOrbitClock 1.0 ChronosOrbitClock.qml
+ComboGlitchEffect 1.0 ComboGlitchEffect.qml
+CrtShaderEffect 1.0 CrtShaderEffect.qml
 CursorSurface 1.0 CursorSurface.qml
+CyberSlashSeparator 1.0 CyberSlashSeparator.qml
+DataGlitchEffect 1.0 DataGlitchEffect.qml
+singleton GlitchBus 1.0 GlitchBus.qml
 KeyboardPanel 1.0 KeyboardPanel.qml
 MarqueeButton 1.0 MarqueeButton.qml
 OpticalGlyph 1.0 OpticalGlyph.qml
@@ -13,12 +20,16 @@ Panel 1.0 Panel.qml
 PanelActionButton 1.0 PanelActionButton.qml
 PanelController 1.0 PanelController.qml
 PanelKeyCatcher 1.0 PanelKeyCatcher.qml
+PanelScrollBar 1.0 PanelScrollBar.qml
 PanelSectionHeader 1.0 PanelSectionHeader.qml
 PanelSeparator 1.0 PanelSeparator.qml
 PanelSlider 1.0 PanelSlider.qml
 PanelToolTip 1.0 PanelToolTip.qml
 PluginBarApi 1.0 PluginBarApi.qml
+ScanlineBlipSeparator 1.0 ScanlineBlipSeparator.qml
 ScreenMoveRemap 1.0 ScreenMoveRemap.qml
+SiliconDieMatrix 1.0 SiliconDieMatrix.qml
+SpatialGlitchEffect 1.0 SpatialGlitchEffect.qml
 TextField 1.0 TextField.qml
 ToggleSwitch 1.0 ToggleSwitch.qml
 WidgetButton 1.0 WidgetButton.qml

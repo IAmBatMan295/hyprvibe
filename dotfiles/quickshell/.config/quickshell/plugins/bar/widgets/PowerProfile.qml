@@ -10,9 +10,9 @@ BarWidget {
   readonly property string profile: Telemetry.powerProfile
 
   readonly property string currentIcon: {
-    if (profile === "performance") return ""
+    if (profile === "performance") return "󰓅"
     if (profile === "power-saver") return "󰌪"
-    return ""
+    return "󰊚"
   }
 
   readonly property string currentTooltip: {

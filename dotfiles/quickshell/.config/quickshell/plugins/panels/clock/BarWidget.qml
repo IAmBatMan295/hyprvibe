@@ -19,6 +19,20 @@ BarWidget {
   readonly property string activeFormat: configuredFormat
   readonly property string displayText: formatted(displayDate)
   readonly property var verticalLines: displayText.split("\n")
+  readonly property string clockStyle: Style.barWidgetStyle("clock", "text")
+  readonly property bool isChronosPip: clockStyle === "chronos-pip"
+  readonly property var splitParts: {
+    var raw = String(displayText || "")
+    var m = raw.match(/^(.*?)\s+(\d{1,2}:\d{2}.*)$/)
+    if (m) return { date: m[1], time: m[2] }
+    return { date: "", time: raw }
+  }
+
+  function scrambledText(s) {
+    return (root.bar && root.bar.dataEffect && root.bar.dataEffect.active)
+      ? root.bar.dataEffect.scrambleText(s)
+      : s
+  }
 
   function refresh() {
     displayDate = new Date()
@@ -43,21 +57,50 @@ BarWidget {
     function refresh() { root.refresh() }
   }
 
+  Component {
+    id: chronosComponent
+
+    ChronosOrbitClock {
+      dateText: root.scrambledText(root.splitParts.date)
+      timeText: root.scrambledText(root.splitParts.time)
+      fontFamily: button.fontFamily
+      datePixelSize: Style.font.bodySmall
+      timePixelSize: Style.font.body
+      dateColor: ThemeColor.muted
+      timeColor: button.effectiveColor
+      accentColor: ThemeColor.accent
+      suspended: GlitchBus.suspended || !root.visible
+    }
+  }
+
   WidgetButton {
     id: button
     anchors.fill: parent
     bar: root.bar
     text: root.vertical ? "" : root.displayText
-    labelVisible: !root.vertical
+    labelVisible: !root.vertical && !root.isChronosPip
     fontBold: true
     fontSize: Style.font.body
     hasVisualContent: root.vertical ? root.verticalLines.length > 0 : text !== ""
+    fixedWidth: (!root.vertical && root.isChronosPip && chronosLoader.item)
+      ? Math.ceil(chronosLoader.item.implicitWidth + button.scaledHorizontalMargin * 2)
+      : -1
     fixedHeight: root.vertical ? root.verticalLines.length * Style.bar.iconSlot : -1
+    contentVisualWidth: (!root.vertical && root.isChronosPip && chronosLoader.item)
+      ? chronosLoader.item.implicitWidth
+      : button.labelWidth
     horizontalMargin: 8
     verticalPadding: 2
     pressable: false
     interactive: false
     highlightOnHover: false
+
+    Loader {
+      id: chronosLoader
+      anchors.centerIn: parent
+      active: !root.vertical && root.isChronosPip
+      sourceComponent: chronosComponent
+    }
 
     Column {
       visible: root.vertical

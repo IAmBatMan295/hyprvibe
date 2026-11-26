@@ -28,7 +28,9 @@ import Quickshell.Io
 QtObject {
   id: root
 
-  property int cornerRadius: 0
+  property int hyprCornerRadius: 0
+  property int cornerRadiusOverride: -1
+  readonly property int cornerRadius: cornerRadiusOverride >= 0 ? cornerRadiusOverride : hyprCornerRadius
   property int gapsOut: 5
   property int borderSize: 2
   // Distance from screen edge to the inner edge of Hyprland's window border.
@@ -270,13 +272,89 @@ QtObject {
   // component follows the fontconfig alias `hyprvibe-font-set` writes.
   // Themes can override per-token via [font] in shell.toml, but the
   // family stays system-wide.
-  property string fontFamily: "JetBrainsMono Nerd Font"
+  property string fontFamilyOverride: ""
+  readonly property string fontFamily: fontFamilyOverride.length > 0 ? fontFamilyOverride : resolvedFontFamily
 
   // The concrete family `monospace` resolves to right now, e.g.
   // "JetBrainsMono Nerd Font". Bind `font.family` to `fontFamily` (so the
   // alias path keeps working when the user runs `hyprvibe font set`), but
   // read `resolvedFontFamily` when you want to *display* what's drawing.
   property string resolvedFontFamily: "JetBrainsMono Nerd Font"
+
+  // Effects & animations tokens (global + per-component, driven by shell.toml [effects])
+  // Designed for future GUI toggles writing ~/.config/hyprvibe/shell.toml.
+  property var effectOverrides: ({})
+
+  function effectBool(key, fallback) {
+    return boolToken(effectOverrides[key], fallback)
+  }
+
+  function effectInt(key, fallback) {
+    var n = parseInt(effectOverrides[key], 10)
+    return isFinite(n) ? n : fallback
+  }
+
+  function effectReal(key, fallback) {
+    var n = Number(effectOverrides[key])
+    return isFinite(n) ? n : fallback
+  }
+
+  function effectString(key, fallback) {
+    var v = effectOverrides[key]
+    if (typeof v !== "string") return fallback
+    v = v.replace(/^\s+|\s+$/g, "").toLowerCase()
+    return v.length > 0 ? v : fallback
+  }
+
+  readonly property QtObject effects: QtObject {
+    readonly property bool enabled: root.effectBool("enabled", false)
+    readonly property bool animations: root.effectBool("animations", true)
+    readonly property int glitchIntervalMs: Math.max(500, root.effectInt("glitch-interval-ms", 5000))
+    readonly property int glitchBurstMs: Math.max(120, root.effectInt("glitch-burst-ms", 420))
+    readonly property real crtScanlineAlpha: Math.max(0.0, Math.min(0.45, root.effectReal("crt-scanline-alpha", 0.24)))
+    readonly property string separatorStyle: root.effectString("bar-separator-style", "line")
+    readonly property string cpuIndicatorStyle: root.effectString("bar-cpu-style", "text")
+    readonly property string ramIndicatorStyle: root.effectString("bar-ram-style", "text")
+    readonly property string clockStyle: root.effectString("bar-clock-style", "text")
+    readonly property int barBlipIntervalMs: Math.max(800, root.effectInt("bar-blip-interval-ms", 2800))
+  }
+
+  function barWidgetStyle(key, classicFallback) {
+    if (!effects.enabled) return classicFallback
+    if (key === "separator") return effects.separatorStyle
+    if (key === "cpu") return effects.cpuIndicatorStyle
+    if (key === "ram") return effects.ramIndicatorStyle
+    if (key === "clock") return effects.clockStyle
+    return classicFallback
+  }
+
+  function loadStateColor(ratio, normalColor, urgentColor) {
+    if (ratio >= 0.80) return Qt.lighter(urgentColor, 1.25)
+    if (ratio >= 0.55) {
+      return Qt.rgba(
+        (normalColor.r + urgentColor.r) * 0.5,
+        (normalColor.g + urgentColor.g) * 0.5,
+        (normalColor.b + urgentColor.b) * 0.5,
+        normalColor.a
+      )
+    }
+    return normalColor
+  }
+
+  function componentGlitchMode(componentId) {
+    if (!effects.enabled || !effects.animations || !componentId) return "none"
+    return effectString(componentId + "-glitch", "none")
+  }
+
+  function componentCrtMode(componentId) {
+    if (!effects.enabled || !componentId) return "off"
+    return effectString(componentId + "-crt", "off")
+  }
+
+  function componentHasEffect(componentId, fx) {
+    var mode = componentGlitchMode(componentId)
+    return mode === fx || mode === "combo"
+  }
 
   // The only sanity floor is 1px. Themes and users can make this as large
   // as they like; if the shell gets ridiculous, that's their call.
@@ -374,7 +452,7 @@ QtObject {
 
   function applyRoundingJson(raw) {
     var n = parseIntOptionJson(raw)
-    if (n !== null) cornerRadius = n
+    if (n !== null) hyprCornerRadius = n
   }
 
   function applyBorderSizeJson(raw) {
@@ -402,7 +480,10 @@ QtObject {
     var barOut = {}
     var styleOut = {}
     var spacingOut = {}
+    var effectsOut = {}
     var nextBase = 14
+    var nextFontFamily = ""
+    var nextCornerRadius = -1
     var nextSpacingScale = 1.0
     var nextSpacingScaleWithFont = true
     var nextBarScaleWithFont = true
@@ -414,14 +495,23 @@ QtObject {
       var key = fullKey.substr(dot + 1)
       var raw = v[fullKey]
       if (section === "font") {
-        var ival = parseInt(raw, 10)
-        if (!isFinite(ival)) continue
-        if (key === "base-size") nextBase = ival
-        else fontOut[key] = ival
+        if (key === "family") {
+          nextFontFamily = String(raw || "").replace(/^\s+|\s+$/g, "")
+        } else {
+          var ival = parseInt(raw, 10)
+          if (!isFinite(ival)) continue
+          if (key === "base-size") nextBase = ival
+          else fontOut[key] = ival
+        }
+      } else if (section === "corner") {
+        if (key === "radius") {
+          var cval = parseInt(raw, 10)
+          if (isFinite(cval)) nextCornerRadius = cval
+        }
       } else if (section === "bar") {
         if (key === "scale-with-font") {
           nextBarScaleWithFont = boolToken(raw, nextBarScaleWithFont)
-        } else if (key === "size-horizontal" || key === "size-vertical") {
+        } else if (key === "size-horizontal" || key === "size-vertical" || key === "icon-slot" || key === "icon-canvas" || key === "icon-font" || key === "status-slot") {
           var b = parseInt(raw, 10)
           if (isFinite(b)) barOut[key] = b
         }
@@ -434,6 +524,8 @@ QtObject {
           if (key === "scale") nextSpacingScale = fval
           else spacingOut[key] = fval
         }
+      } else if (section === "effects") {
+        effectsOut[key] = raw
       } else if (section === "controls" || section === "style") {
         // Strings are passed through; styleRawNum/styleString coerce on read.
         // [style] is the legacy name for [controls].
@@ -448,10 +540,13 @@ QtObject {
     spacingScale = nextSpacingScale
     spacingScaleWithFont = nextSpacingScaleWithFont
     fontBaseSize = nextBase
+    fontFamilyOverride = nextFontFamily
+    cornerRadiusOverride = nextCornerRadius
     fontOverrides = fontOut
     barOverrides = barOut
     barScaleWithFont = nextBarScaleWithFont
     spacingOverrides = spacingOut
+    effectOverrides = effectsOut
     styleOverrides = styleOut
   }
 

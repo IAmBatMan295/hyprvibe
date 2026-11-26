@@ -204,6 +204,19 @@ cmd_set() {
     load_colors_file "${target_dir}/colors.toml"
     render_all_templates "$TEMPLATES_DIR" "$STATE_DIR"
 
+    # Merge optional per-theme shell.overrides.toml onto rendered shell.toml
+    if [[ -f "${target_dir}/shell.overrides.toml" && -f "${STATE_DIR}/shell.toml" ]]; then
+        local tmp_shell
+        tmp_shell="$(mktemp "${STATE_DIR}/.shell.toml.XXXXXX")"
+        {
+            cat "${STATE_DIR}/shell.toml"
+            printf '\n'
+            cat "${target_dir}/shell.overrides.toml"
+        } > "$tmp_shell"
+        chmod 644 "$tmp_shell" 2>/dev/null || true
+        mv -f "$tmp_shell" "${STATE_DIR}/shell.toml"
+    fi
+
     # Atomically update colors.toml & theme.name (keeps file watchers consistent)
     local tmp_colors tmp_name
     tmp_colors="$(mktemp "${STATE_DIR}/.colors.toml.XXXXXX")"

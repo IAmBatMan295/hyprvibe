@@ -50,6 +50,19 @@ PanelWindow {
   property int gap: Style.space(10)  // distance between bar edge and panel
   property bool popoutSwitchClosing: false
   property bool focusPrimed: false
+  property bool _glitchRegistered: false
+
+  function _syncGlitchBus(isOpen) {
+    if (isOpen && !_glitchRegistered) {
+      _glitchRegistered = true
+      GlitchBus.registerPopupOpen()
+    } else if (!isOpen && _glitchRegistered) {
+      _glitchRegistered = false
+      GlitchBus.unregisterPopupOpen()
+    }
+  }
+
+  Component.onDestruction: _syncGlitchBus(false)
 
   // Item that should take keyboard focus once the panel maps. Typically a
   // PanelKeyCatcher inside the panel content. Layer-shell grants focus to the
@@ -161,6 +174,7 @@ PanelWindow {
   readonly property real availableCardHeight: screenH > 0
     ? Math.max(120, screenH - ((barPos === "top" || barPos === "bottom") ? barH + gap + margin : margin * 2))
     : 0
+  readonly property int maxPanelContentHeight: Style.space(520)
   readonly property real verticalContentInset: padding * 2 + Border.top(borderSpec) + Border.bottom(borderSpec)
 
   function fittedContentWidth(width, cap) {
@@ -175,6 +189,32 @@ PanelWindow {
     var maxHeight = root.availableCardHeight > 0 ? root.availableCardHeight : desired
     if (cap !== undefined && Number(cap) > 0) maxHeight = Math.min(maxHeight, Number(cap))
     return Math.round(Math.min(desired, maxHeight))
+  }
+
+  function maxListViewportHeight(nonScrollHeight) {
+    var cap = root.availableCardHeight > 0
+      ? Math.min(root.availableCardHeight, root.maxPanelContentHeight)
+      : root.maxPanelContentHeight
+    return Math.max(Style.space(80), cap - root.verticalContentInset - Math.max(0, Number(nonScrollHeight) || 0))
+  }
+
+  // Sum visible sibling heights + gaps inside a Column excluding scrollTarget,
+  // avoiding any dependency on scrollTarget.height (which would form a loop).
+  function nonScrollChildrenHeight(container, scrollTarget) {
+    if (!container) return 0
+    var total = 0
+    var count = 0
+    var kids = container.children
+    for (var i = 0; i < kids.length; ++i) {
+      var c = kids[i]
+      if (!c || c === scrollTarget || !c.visible) continue
+      var h = c.implicitHeight > 0 ? c.implicitHeight : c.height
+      if (h <= 0) continue
+      total += h
+      count += 1
+    }
+    var sp = Number(container.spacing) || 0
+    return total + (count > 0 ? count * sp : 0)
   }
 
   function cappedContentHeight(height) {
@@ -233,6 +273,7 @@ PanelWindow {
   // Coordinate on `open`, not `visible`. `visible` lags into the fade-out
   // animation, which made ownership transfer to a sibling popup race.
   onOpenChanged: {
+    _syncGlitchBus(open)
     if (open) {
       focusPrimed = false
       beginFocusPrime()

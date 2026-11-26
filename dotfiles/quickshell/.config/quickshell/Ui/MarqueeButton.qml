@@ -112,6 +112,9 @@ Item {
   }
   readonly property real viewportWidth: Math.max(0, width - scaledHorizontalMargin * 2)
   readonly property real textWidth: Math.ceil(Math.max(metrics.advanceWidth, metrics.boundingRect.width))
+  readonly property string displayText: (root.bar && root.bar.dataEffect && root.bar.dataEffect.active)
+    ? root.bar.dataEffect.scrambleText(root.text)
+    : root.text
   readonly property bool needsScroll: text !== "" && viewportWidth > 0 && textWidth > viewportWidth
   // Distance from widget outer edge to the clipped marquee wrap viewport;
   // Bar.qml subtracts this from Style.gapsOut to keep widget margins symmetric
@@ -153,7 +156,7 @@ Item {
       id: staticLabel
       visible: !root.needsScroll
       anchors.centerIn: parent
-      text: root.text
+      text: root.displayText
       textFormat: Text.PlainText
       color: root.resolvedColor
       font.family: root.fontFamily
@@ -180,7 +183,7 @@ Item {
         id: copyA
         x: 0
         height: parent.height
-        text: root.text
+        text: root.displayText
         textFormat: Text.PlainText
         color: root.resolvedColor
         font.family: root.fontFamily
@@ -199,7 +202,7 @@ Item {
         id: copyB
         x: root.textWidth + root.scaledMarqueeGap
         height: parent.height
-        text: root.text
+        text: root.displayText
         textFormat: Text.PlainText
         color: root.resolvedColor
         font.family: root.fontFamily

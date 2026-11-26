@@ -5,6 +5,7 @@ Item {
   id: root
 
   property string text: ""
+  property string displayText: text
   property string fontFamily: Style.font.family
   property real fontSize: Style.font.body
   property color color: ThemeColor.foreground
@@ -30,7 +31,7 @@ Item {
     // horizontal painted bounds avoids per-glyph vertical drift.
     anchors.centerIn: parent
     anchors.horizontalCenterOffset: root.horizontalCorrection
-    text: root.text
+    text: root.displayText
     color: root.color
     font.family: root.fontFamily
     font.pixelSize: root.renderedFontSize
